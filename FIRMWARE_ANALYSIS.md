@@ -291,10 +291,65 @@ runtime state check — the other branch calls only `FUN_08006d3c`
 understanding this gate before assuming the pump always runs every loop
 iteration.
 
+## Confirmed: knob sampling is ADC1 + DMA1, resolved via indirect pointers
+
+Earlier in this document, the peripheral cross-reference method (checking
+which functions directly reference known STM32F1 peripheral base
+addresses as literal instruction operands) found **zero** references to
+ADC1, ADC2, SPI, or I2C anywhere in the binary, leading to an open
+question about how knobs are actually sampled.
+
+**Resolved**: they are read via the STM32's internal ADC1, transferred via
+DMA1 — the peripheral cross-reference method simply couldn't see it,
+because the code doesn't embed the peripheral address as a literal
+operand at the call site. Instead, a small set of flash constants store
+the peripheral base *addresses themselves as data* (`DAT_08002480` =
+`0x40012400` = ADC1 base; `DAT_0800383c` and `DAT_08003708` = `0x40020000`
+= **DMA1** base — a peripheral never checked in the earlier searches,
+since it wasn't among the "obvious" candidates for a device with no
+apparent DMA-driven activity), and helper functions dereference those
+stored pointers at runtime. A reference search for literal operands
+matching the peripheral address will never find this pattern; only
+resolving the pointer *values* and re-checking against those does.
+
+Traced chain, confirmed against raw bytes:
+
+- `FUN_08002566(0x40012400, 1)` sets ADC1_CR2 bits `0x500000` = **EXTTRIG
+  (bit 20) | SWSTART (bit 22)** — software-triggers an ADC conversion
+  sequence.
+- `FUN_08003820(2)` / `FUN_080036f8(2)` poll and clear DMA1's global
+  interrupt/transfer-complete flags for a specific channel (channel
+  index encoded via the `param_1 << 3` sign trick, matching DMA1_ISR's
+  4-bits-per-channel layout) — standard "wait for DMA transfer done,
+  clear the flag" pattern.
+- `FUN_08002400` (called every main-loop iteration) is the actual
+  consumer: once DMA signals completion, it reads 16 raw 12-bit values
+  (`& 0xFFF`, matching the STM32's ADC resolution exactly) from an SRAM
+  buffer DMA wrote to (`0x200001c0`), accumulates them across 4 calls,
+  then right-shifts by 4 (a 4x-oversample-and-average, a standard
+  noise-reduction technique) into a second SRAM array — which is exactly
+  the array `FUN_0800478c` (below) reads as each knob's "current value".
+
+The interrupt vector table was also checked directly (not just the
+call-graph-reachable functions) as part of this investigation — the
+ADC1_2 interrupt vector points to a single `bx lr` (immediate return, does
+nothing) stub, confirming ADC completion is **polled** (via the DMA
+flag-check functions above, called from the main loop), not
+interrupt-driven, consistent with this firmware's apparent all-polling
+main-loop architecture (no TIM1-4 or EXTI activity was found either,
+earlier in this document).
+
+**Practical implication for the replacement firmware**: implementing real
+knob support needs an ADC1 + DMA1 init (continuous or software-triggered
+scan of the relevant channels into a 16-entry SRAM buffer) in addition to
+the CC-generation logic below — not yet done in `firmware/`, tracked as a
+task.
+
 ## Candidate: knob/CC handler — `FUN_0800478c` (medium confidence)
 
-Gated behind a flag (`*DAT_080048d8 == 1`, cleared on entry — likely set by
-an ADC-conversion-complete signal). Iterates a table of entries indexed by
+Gated behind a flag (`*DAT_080048d8 == 1`, cleared on entry — set by
+`FUN_08002400` above once a new oversampled reading is ready, not an ADC
+interrupt as originally guessed). Iterates a table of entries indexed by
 `uVar11`, each entry checked for "enabled" (a non-zero byte at `+0x4D`),
 then reads what look like a CC number and channel (`+0x4E`, `+0x4F`),
 compares a current value against a previous-value array, and on change
