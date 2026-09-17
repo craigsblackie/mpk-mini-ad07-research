@@ -14,37 +14,52 @@
  *
  * NOT YET CONFIRMED: which physical GPIOA pin (ADC channel N = pin
  * PAN, fixed STM32F1 hardware mapping) each knob is actually wired
- * to, and whether it's really channels 0-7 rather than some other
- * subset (the original reads 16 buffer slots, not 8 -- possibly
- * covering the joystick's 2 axes too, or just headroom). Using
- * channels 0-7 / PA0-PA7 as a reasonable placeholder; needs
+ * to. Using channels 0-7 / PA0-PA7 as a reasonable placeholder; needs
  * confirming against the schematic or real hardware before the CC
  * values coming out actually correspond to the right physical knob.
+ *
+ * The original reads 16 buffer slots, not 8 -- FIRMWARE_ANALYSIS.md's
+ * pad-velocity section (FUN_08003ab8) revised this to most likely 8
+ * knobs + 8 pad-velocity-sense channels, not unused headroom. This
+ * driver now scans all 16: channels 0-7 (knobs, PA0-7, as before)
+ * followed by channels 8-15 (pads, PB0-1 + PC0-5 -- the standard
+ * STM32F1 ADC12_IN8-15 pin mapping, and pins not otherwise used by
+ * the key/pad matrix scanner in matrix.c, which owns PB8-15/PC7-15).
+ * Which physical pad maps to which of these 8 channels is NOT
+ * confirmed either -- same placeholder-honesty caveat as the knobs.
  */
 #include "adc.h"
 #include "stm32f102.h"
 
-volatile uint16_t adc_raw[ADC_NUM_CHANNELS];
+volatile uint16_t adc_raw[ADC_TOTAL_CHANNELS];
 
 void adc_init(void)
 {
-	RCC->APB2ENR |= RCC_APB2ENR_IOPAEN | RCC_APB2ENR_ADC1EN;
+	RCC->APB2ENR |= RCC_APB2ENR_IOPAEN | RCC_APB2ENR_IOPBEN | RCC_APB2ENR_IOPCEN | RCC_APB2ENR_ADC1EN;
 	RCC->AHBENR |= RCC_AHBENR_DMA1EN;
 
-	/* PA0..PA7 as analog input (CRL nibble = 0b0000 per pin). */
+	/* Analog input mode (CNF=00, MODE=00) on every pin used for ADC
+	 * input. PA0..PA7 (knobs): all of CRL. PB0..PB1 (pads): low byte
+	 * of CRL. PC0..PC5 (pads): low 3 bytes of CRL. */
 	GPIOA->CRL &= ~0xFFFFFFFFu;
+	GPIOB->CRL &= ~0x000000FFu;
+	GPIOC->CRL &= ~0x00FFFFFFu;
 
-	/* Regular sequence: 8 conversions, channels 0..7 in order.
-	 * SQR3 holds sequence positions 1-6 (4 bits each), SQR2 holds
-	 * 7-12. SQR1's L field (bits 20-23) = number of conversions - 1. */
+	/* Regular sequence: 16 conversions -- channels 0-7 (knobs) then
+	 * 8-15 (pads), in order. SQR3 holds sequence positions 1-6 (5
+	 * bits each), SQR2 holds 7-12, SQR1 holds 13-16 plus the L field
+	 * (bits 20-23) = number of conversions - 1. */
 	ADC1->SQR3 = (0u << 0) | (1u << 5) | (2u << 10) | (3u << 15) | (4u << 20) | (5u << 25);
-	ADC1->SQR2 = (6u << 0) | (7u << 5);
-	ADC1->SQR1 = (uint32_t)(ADC_NUM_CHANNELS - 1) << 20;
+	ADC1->SQR2 = (6u << 0) | (7u << 5) | (8u << 10) | (9u << 15) | (10u << 20) | (11u << 25);
+	ADC1->SQR1 = (12u << 0) | (13u << 5) | (14u << 10) | (15u << 15) |
+	             ((uint32_t)(ADC_TOTAL_CHANNELS - 1) << 20);
 
-	/* Sample time: max (239.5 cycles) for all channels -- knobs don't
-	 * need speed, and a longer sample time reduces noise. SMPR2
-	 * covers channels 0-9, 3 bits each. */
+	/* Sample time: max (239.5 cycles) for all channels -- neither
+	 * knobs nor pad-velocity sensing need speed, and a longer sample
+	 * time reduces noise. SMPR2 covers channels 0-9, SMPR1 covers
+	 * 10-17, 3 bits each. */
 	ADC1->SMPR2 = 0x3FFFFFFFu;
+	ADC1->SMPR1 = 0x00FFFFFFu;
 
 	ADC1->CR1 = 0; /* independent mode, scan handled via CR2 below */
 	ADC1->CR2 = ADC_CR2_ADON;
@@ -66,7 +81,7 @@ void adc_init(void)
 	 * refreshed). */
 	DMA1->CH[0].CPAR = (uint32_t)&ADC1->DR;
 	DMA1->CH[0].CMAR = (uint32_t)adc_raw;
-	DMA1->CH[0].CNDTR = ADC_NUM_CHANNELS;
+	DMA1->CH[0].CNDTR = ADC_TOTAL_CHANNELS;
 	DMA1->CH[0].CCR = DMA_CCR_MINC | DMA_CCR_CIRC | DMA_CCR_PSIZE_16 | DMA_CCR_MSIZE_16 | DMA_CCR_EN;
 
 	/* Scan mode (bit 8 of CR1), continuous conversion, DMA, then

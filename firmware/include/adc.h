@@ -3,11 +3,15 @@
 
 #include <stdint.h>
 
-#define ADC_NUM_CHANNELS 8 /* one per knob -- see adc.c header comment */
+#define ADC_NUM_CHANNELS 8     /* knobs -- channels 0-7 (PA0-7) */
+#define ADC_NUM_PAD_CHANNELS 8 /* pads -- channels 8-15 (PB0-1, PC0-5) */
+#define ADC_TOTAL_CHANNELS (ADC_NUM_CHANNELS + ADC_NUM_PAD_CHANNELS)
 
 /* Raw 12-bit ADC readings, continuously updated by DMA in the
- * background -- no polling/blocking needed to read these. */
-extern volatile uint16_t adc_raw[ADC_NUM_CHANNELS];
+ * background -- no polling/blocking needed to read these.
+ * Index 0..ADC_NUM_CHANNELS-1: knobs. Index ADC_NUM_CHANNELS..
+ * ADC_TOTAL_CHANNELS-1: pads (see pads.h). */
+extern volatile uint16_t adc_raw[ADC_TOTAL_CHANNELS];
 
 void adc_init(void);
 

@@ -19,10 +19,11 @@ external ESP32-C3 while preserving the original USB MIDI functionality.
   (raw decompiler output itself is not published here — see "What's not in
   this repo").
 - **An open-source replacement firmware has been started** (`firmware/`) —
-  compiles cleanly as of this writing, with the matrix scanner, MIDI ring
-  buffer, and a minimal USB device stack implemented. Not yet
-  feature-complete or hardware-tested — see `firmware/README.md` for exact
-  status.
+  compiles cleanly as of this writing (`-Wall -Wextra`, zero warnings),
+  with the matrix scanner, MIDI ring buffer, USB device stack, keys, pads,
+  knobs, octave buttons, and a stuck-note safety net implemented, plus a
+  standalone arpeggiator skeleton. Not yet feature-complete or
+  hardware-tested — see `firmware/README.md` for exact status.
 
 ## Repo layout
 

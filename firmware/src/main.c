@@ -1,11 +1,14 @@
 /*
  * AD07 open-source replacement firmware -- main entry point.
  *
- * Status: early skeleton. Implemented for real: matrix scanning, the
- * MIDI TX ring buffer. Stubbed/TODO: clock init, USB device stack,
- * key-edge-to-MIDI-note conversion, knobs, SysEx editor protocol.
- * See FIRMWARE_ANALYSIS.md for what's confirmed vs. still unknown
- * about the original firmware's behavior in each of those areas.
+ * Status: keys, pads, knobs, octave buttons, stuck-note cleanup, USB,
+ * and the MIDI TX pipeline are all implemented (with documented
+ * placeholders where real hardware data is still needed -- see each
+ * module's header comment). The arpeggiator (arp.c) is a standalone
+ * skeleton, not yet wired to key/pad input. SysEx editor protocol
+ * (decoded, not yet reimplemented as firmware) is still TODO. See
+ * FIRMWARE_ANALYSIS.md for what's confirmed vs. still unknown about
+ * the original firmware's behavior in each of these areas.
  */
 #include "stm32f102.h"
 #include "matrix.h"
@@ -13,6 +16,10 @@
 #include "keys.h"
 #include "adc.h"
 #include "knobs.h"
+#include "pads.h"
+#include "buttons.h"
+#include "stuck_note.h"
+#include "arp.h"
 #include "usb.h"
 
 static void clock_init(void)
@@ -65,11 +72,20 @@ int main(void)
 
 	keys_init();
 	knobs_init();
+	pads_init();
+	buttons_init();
+	stuck_note_init();
+	arp_init();
 
 	while (1) {
 		matrix_scan();
 		keys_process();
+		pads_process();
+		/* Placeholder input source -- see buttons.c's header comment. */
+		buttons_process(matrix_state[7]);
 		knobs_process();
+		stuck_note_process();
+		arp_process();
 		usb_poll();
 
 		if (midi_ring_count() > 0) {

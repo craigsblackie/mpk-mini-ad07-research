@@ -1,6 +1,7 @@
 # Open-source AD07 replacement firmware — early skeleton
 
-**Status: compiles and links cleanly, not yet tested on real hardware.**
+**Status: compiles and links cleanly (`-Wall -Wextra`, zero warnings),
+not yet tested on real hardware.**
 This is a genuine, from-scratch reimplementation (not decompiled/copied
 code — see `FIRMWARE_ANALYSIS.md` for the analysis this is based on and
 each source file's header comments for what's confirmed-behavior vs.
@@ -47,7 +48,7 @@ land.
   boilerplate, the same shape as any STM32F1 project.
 
 - **Knob → MIDI CC** (`src/adc.c`, `src/knobs.c`): ADC1 in continuous
-  scan mode over 8 channels, DMA1 channel 1 keeping `adc_raw[]` fresh
+  scan mode over 16 channels, DMA1 channel 1 keeping `adc_raw[]` fresh
   autonomously, 4x oversampling, and CC messages sent on meaningful
   change. Confirmed via a real reverse-engineering find this session
   (`FIRMWARE_ANALYSIS.md`'s ADC/DMA section) that the original firmware
@@ -60,17 +61,46 @@ land.
   per-knob CC number assignments aren't decoded yet either (using common
   CC numbers 70-77 as placeholders — real values live in the per-program
   SysEx-transferred record, not yet decoded).
+- **Pad velocity sensing → MIDI Note On/Off** (`src/pads.c`): reimplements
+  the confirmed shape of the original's pad-velocity handler — attack/
+  release threshold hysteresis on each pad's ADC reading (channels 8-15,
+  the other half of the now-16-channel ADC scan), with the original's
+  documented velocity-scaling formula. Placeholders: which ADC channel
+  maps to which physical pad, and pad note-number assignments (same
+  per-program-record gap as knob CC numbers).
+- **Octave up/down buttons** (`src/buttons.c`): reimplements the
+  toggle-between-two-states pattern found in the original's button
+  handler as an octave up/down offset (±4), applied to `keys.c`'s note
+  output. Placeholder: the actual input source/bit mapping isn't
+  confirmed — currently reads `matrix_state[7]`, one of the matrix
+  scanner's two "extra" columns, as a reasonable guess.
+- **Stuck-note safety net** (`src/stuck_note.c`): reimplements the
+  original's 8-slot timeout mechanism — force-sends a Note Off for any
+  key/pad note that's been held too long without a matching release.
+  Wired into both `keys.c` and `pads.c`. Placeholder: the timeout
+  duration/timebase isn't confirmed (counts main-loop iterations).
 
 ## What's stubbed / not yet implemented
 
 - **The key-index lookup table** (see caveat above) — the single biggest
   remaining gap now that the rest of the key→MIDI pipeline exists.
-- **Knob ADC-channel and CC-number mappings** (see caveat above).
-- **SysEx editor protocol**, **pedal/joystick handling** — still open per
-  `FIRMWARE_ANALYSIS.md`'s "not yet analyzed" section; tracked as tasks in
-  this project's ongoing work.
+- **Knob ADC-channel/CC-number and pad ADC-channel/note-number mappings**
+  (see caveats above).
+- **Octave-button input source** (see caveat above).
+- **Arpeggiator** (`src/arp.c`): a standalone, functional but genuinely
+  partial skeleton — fixed-tempo ascending-only stepping over a held-note
+  set, not the original's actual tempo/range/direction/gate parameters
+  (those live in the undecoded per-program record). Not yet wired to
+  key/pad input (`arp_enabled` defaults to off, nothing calls
+  `arp_note_on()`/`arp_note_off()` yet).
+- **SysEx editor protocol** — decoded (see `FIRMWARE_ANALYSIS.md`), not
+  yet reimplemented as firmware.
 - What incoming MIDI (EP1 OUT) actually *does* — the plumbing exists
   (`usb_midi_on_receive`) but nothing consumes it yet.
+- There is no pitch-bend/mod-wheel/joystick handling because there is no
+  such control on this hardware — confirmed against a photo of the real
+  device (see `FIRMWARE_ANALYSIS.md`'s joystick section). Nothing to
+  implement here.
 
 ## Building
 

@@ -21,6 +21,8 @@
 #include "keys.h"
 #include "matrix.h"
 #include "midi_ring.h"
+#include "buttons.h"
+#include "stuck_note.h"
 
 #define KEY_NONE 0xFF
 #define MIDI_CHANNEL 0 /* channel 1 */
@@ -55,13 +57,25 @@ static void send_note(uint8_t key_index, uint8_t on, uint8_t velocity)
 	if (key_index == KEY_NONE) {
 		return;
 	}
-	uint8_t note = (uint8_t)(keys_base_note + key_index);
+	int16_t note = (int16_t)keys_base_note + key_index + (int16_t)buttons_octave_offset * 12;
+	if (note < 0) {
+		note = 0;
+	}
+	if (note > 127) {
+		note = 127;
+	}
 	uint8_t event[4];
 	event[0] = on ? 0x09 : 0x08; /* Cable 0, CIN: Note On / Note Off */
 	event[1] = (uint8_t)((on ? 0x90 : 0x80) | MIDI_CHANNEL);
-	event[2] = note;
+	event[2] = (uint8_t)note;
 	event[3] = velocity;
 	midi_ring_push(event, 4);
+
+	if (on) {
+		stuck_note_on(MIDI_CHANNEL, (uint8_t)note);
+	} else {
+		stuck_note_off(MIDI_CHANNEL, (uint8_t)note);
+	}
 
 	/* TODO: this is the intended mirror point for the ESP32-C3 BLE
 	 * MIDI project -- e.g.:

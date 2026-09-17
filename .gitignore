@@ -14,6 +14,8 @@ decompiled_full.c
 peripheral_map.txt
 callers.txt
 quick_periph.txt
+adc_isr.txt
+writers.txt
 ghidra-project/
 
 # Huge OpenOCD session logs from the extraction process — not useful
