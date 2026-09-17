@@ -32,8 +32,9 @@ arriving on PA10 into the same handler USB SysEx uses.
 - ESP32-C3 SuperMini (HW-466AB or equivalent), USB-C.
 - A 1 A diode: 1N5819 Schottky preferred, but a plain 1N4007 works too --
   see "Power" for the headroom arithmetic.
-- 100 µF electrolytic capacitor, 10 V or higher.
-- 100 nF ceramic capacitor (optional but recommended).
+- 100 µF electrolytic capacitor, 10 V or higher -- **optional on a short
+  in-case run**, see "Power".
+- 100 nF ceramic capacitor (optional).
 - Thin enamelled or silicone wire, 30 AWG or similar, for the two chip pins.
 
 ## Wiring
@@ -123,16 +124,26 @@ the board and the right way round, with the 100 nF in parallel if you have one.
 The ESP32-C3's radio draws in bursts and the run back to the MPK's bulk cap is
 long enough to matter.
 
-100 uF is the sensible default. A larger one buffers the radio better, which
-helps on an LP5907 board, but USB 2.0 limits downstream bulk capacitance to
-10 uF per device (spec 7.2.4.1) because charging a big reservoir from cold
-looks like a short: the inrush can trip a host port's over-current protection
-or sag VBUS enough to disturb other devices on the same hub. Plenty of devices
-exceed that limit happily -- if the keyboard enumerates reliably on the port
-you actually use, and nothing else on the bus glitches when you plug it in,
-the larger cap is fine. Otherwise drop back toward 100-220 uF. Do not add
-series resistance to tame the inrush; it would eat the supply headroom the
-diode arithmetic above depends on.
+**The bulk capacitor is optional on a short in-case run.** The SuperMini
+already carries the input and output capacitors the regulator needs to be
+stable, so an added one supplies reserve, not decoupling -- and reserve only
+matters when the source is distant or resistive. Neither applies here. The
+LP5907 needs about 3.42 V in and is fed roughly 4.2 V, leaving ~0.78 V of sag
+budget, against which 15 cm of 30 AWG wire costs ~10 mV and the 1N4007's
+dynamic resistance ~100 mV at 200 mA. That is about a seventh of the budget.
+
+Fit one if the ESP ever resets or drops its BLE link while the editor's WiFi
+is transmitting; 100 uF is plenty. Leaving it out also removes one of the only
+two polarity mistakes available on this build.
+
+If you do fit a large one, check the first plug-in. USB 2.0 limits downstream
+bulk capacitance to 10 uF per device (spec 7.2.4.1) because charging a big
+reservoir from cold looks like a short: the inrush can trip a host port's
+over-current protection or sag VBUS enough to disturb other devices on the
+same hub. Plenty of devices exceed that limit happily -- if the keyboard
+enumerates reliably on the port you actually use and nothing else on the bus
+glitches, it is fine. Do not add series resistance to tame the inrush; it
+would eat the supply headroom the diode arithmetic above depends on.
 
 The open firmware already declares the USB 2.0 high-power maximum (500 mA in
 `bMaxPower`) instead of stock's 100 mA, so the combined draw is within what the
