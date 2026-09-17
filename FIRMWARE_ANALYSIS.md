@@ -480,6 +480,42 @@ that pattern at all on closer reading.
   notification back to a connected editor (e.g. reporting an octave or
   program change), not user-facing MIDI.
 
+**Update — the status byte's source, checked directly against the raw
+binary**: disassembling `FUN_080044fc` (`arm-none-eabi-objdump` against
+the verified firmware dump, since the live Ghidra analysis session
+wasn't available this pass) resolves `DAT_080045c4` to SRAM address
+`0x20000011` — a literal pool load, confirmed by reading the raw bytes
+at its flash location. This is **not** part of the matrix scanner's own
+result buffers (those live at `0x200002d0`+, per this document's matrix
+scanner section) — so whatever sets this byte, it is confirmed *not* to
+be a direct read of `matrix_state[]`. Searching the rest of the binary
+for other references to this same address found exactly one other
+reader, in a large function near the main loop (~`0x8006994`) that
+constructs the *identical* `F0 47 00 04 7C 6A 00 04 04 5B 00 07 <byte>
+F7` SysEx template — and only one writer anywhere in the binary, an
+init routine that zeroes it at startup alongside a cluster of other
+single-byte flags packed into the first ~50 bytes of SRAM. No store to
+this address was found outside that one-time init, meaning whatever
+sets it to a nonzero value during normal operation does so through a
+different code path than a simple literal-pool-addressed write — most
+likely computed through a pointer/offset this pass didn't resolve.
+
+This leaves real uncertainty about whether `FUN_080044fc` fires from a
+**physical button** at all, versus a **command byte received over
+USB/SysEx from AKAI's editor software** that happens to also update
+device state and echo a status message back — the two candidate reader
+functions found are both firmware-internal "process this and possibly
+tell the editor about it" shapes, not obviously tied to GPIO/matrix
+input. `firmware/`'s `buttons.c` already flagged its `matrix_state[7]`
+input source as an unconfirmed placeholder before this pass; this
+finding makes that caveat stronger (not just "unconfirmed" but
+"confirmed to not be a direct matrix_state read" in the original),
+without yet supplying a replacement source to point it at. Resolving
+this further would need either live Ghidra data-flow tracing (this
+session's bridge to the analysis tool was unavailable) or empirical
+testing against real hardware (press the octave buttons, see what
+changes).
+
 ## Revised: pad velocity sensing — `FUN_08003ab8` (medium confidence)
 
 Full trace also revises the earlier "joystick?" guess. The loop structure

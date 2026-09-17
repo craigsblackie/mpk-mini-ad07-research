@@ -12,12 +12,17 @@
  * the same observed behavior, not a transcription of the exact FSM).
  *
  * NOT YET CONFIRMED (same placeholder-honesty policy as keys.c):
- *  - The actual source of the status byte FUN_080044fc reads. It isn't
- *    established whether this comes from the key/pad matrix at all, or
- *    a separate GPIO/status register. main.c currently passes
- *    matrix_state[7] (one of the two "extra" columns matrix.c's own
- *    comment flags as carrying fewer physical inputs -- likely
- *    transport/other buttons) as a reasonable placeholder.
+ *  - The actual source of the status byte FUN_080044fc reads.
+ *    Disassembling the original against the raw binary (see
+ *    FIRMWARE_ANALYSIS.md's "Update" note in this section) resolved its
+ *    address to SRAM 0x20000011 -- CONFIRMED NOT part of the matrix
+ *    scanner's own result buffers (those live at 0x200002d0+), and
+ *    possibly set from a received USB/SysEx command rather than a
+ *    physical button at all (the only other reader found also builds
+ *    the same device-status SysEx message; no direct GPIO write was
+ *    found). main.c still passes matrix_state[7] here as a placeholder
+ *    -- now known to be a guess the original doesn't actually do, kept
+ *    only because there's no confirmed replacement yet.
  *  - Which specific bit is octave-up vs. octave-down (using bit 3 =
  *    up, bit 2 = down here, matching the doc's bit numbering, but
  *    without confirming which physical button that corresponds to).
