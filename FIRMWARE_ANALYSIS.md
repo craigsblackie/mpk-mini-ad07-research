@@ -399,10 +399,53 @@ record concept**, and identifies the actual wire protocol (SysEx,
 `F0 <?> 'G' <?> '|' <cmd> ...`) a replacement firmware would need to
 either implement (for compatibility with the official editor) or
 deliberately not implement (if replacing the editor entirely with, say, a
-web/BLE config interface via the ESP32-C3). Worth a dedicated follow-up
-pass to fully decode the SysEx command set and the exact 101-byte record
-layout, since together they define the entire user-configuration surface
-of the device.
+web/BLE config interface via the ESP32-C3).
+
+### Follow-up pass: full command set and wire encoding
+
+Reading the complete function (not just its opening) resolves the
+command set further:
+
+| Command byte | Meaning (confidence) |
+| --- | --- |
+| `` '`' `` (`0x60`) | Raw payload copy to a local buffer — likely a "dump current program" request. Medium confidence. |
+| `'a'` (`0x61`) | **Write program**: copies from the SysEx payload into the internal 101-byte record. High confidence. |
+| `'b'` (`0x62`) | **Select program**: just sets a current-program-index byte, no bulk copy. High confidence. |
+| `'c'` (`0x63`) | **Read/dump program**: the mirror-image of `'a'` — copies from the internal 101-byte record back out into a SysEx reply buffer. High confidence. |
+
+**The `'a'`/`'c'` byte-shuffle tables reveal the wire encoding is not raw
+8-bit bytes.** The destination indices step through the SysEx buffer at a
+different stride than the source indices step through the internal
+record (e.g. record offsets 1,0,2,3,4,5,6,7,8,9,10,11,12,13,15,17,19,21...
+map to sequential SysEx-buffer positions, and beyond a point the *source*
+side starts incrementing by 2 per destination byte). This pattern — pairs
+of bytes on one side corresponding to single bytes on the other — is
+consistent with a **7-bit-safe SysEx encoding** (necessary because raw
+SysEx data bytes must be ≤ 0x7F; splitting each 8-bit value into two
+7-bit-safe nibbles roughly doubles the wire representation's size, which
+matches what's observed). The precise nibble-packing scheme (which bits
+go where) was not fully reverse-engineered this pass — confirmed to
+exist, not confirmed byte-exact.
+
+**One additional confirmed field**: near the end of the `'a'` handler,
+`*DAT_080032c4 = 60000 / (record[-0x1ee] + record[-0x1ef]*0x80)` — a
+BPM-to-milliseconds conversion (60,000 ms/min ÷ BPM), confirming the
+101-byte record stores a **per-program tempo** value (for the
+arpeggiator), at a byte pair offset from the record base consistent with
+being near its end (the negative offsets here are relative to a
+different base pointer than the record start; exact absolute offset
+within the 101 bytes not pinned down this pass).
+
+**What's still open**: the semantic meaning of most individual byte
+offsets within the 101-byte record (which ones are which knob's CC
+number, which are pad note assignments, key transpose, etc.) — only their
+*positions* in the transfer are confirmed, not their meaning, beyond the
+tempo field above and the knob-config bytes at `record+0x4D..0x4F`
+(cross-confirmed independently by the knob handler, `FUN_0800478c`,
+earlier in this document). A full field-by-field map would need either
+exhaustive manual correlation of the remaining byte-shuffle table entries
+against known AKAI editor software behavior, or empirical testing (send
+a SysEx dump, change one setting in the real editor, dump again, diff).
 
 ## Candidates: two more flag-gated handlers, not yet resolved
 
