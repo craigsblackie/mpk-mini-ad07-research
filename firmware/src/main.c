@@ -11,6 +11,8 @@
 #include "matrix.h"
 #include "midi_ring.h"
 #include "keys.h"
+#include "adc.h"
+#include "knobs.h"
 #include "usb.h"
 
 static void clock_init(void)
@@ -59,12 +61,15 @@ int main(void)
 	matrix_init();
 	midi_ring_init();
 	usb_init();
+	adc_init();
 
 	keys_init();
+	knobs_init();
 
 	while (1) {
 		matrix_scan();
 		keys_process();
+		knobs_process();
 		usb_poll();
 
 		if (midi_ring_count() > 0) {

@@ -46,13 +46,29 @@ land.
 - Startup code, vector table, linker script: standard Cortex-M3/STM32F1
   boilerplate, the same shape as any STM32F1 project.
 
+- **Knob → MIDI CC** (`src/adc.c`, `src/knobs.c`): ADC1 in continuous
+  scan mode over 8 channels, DMA1 channel 1 keeping `adc_raw[]` fresh
+  autonomously, 4x oversampling, and CC messages sent on meaningful
+  change. Confirmed via a real reverse-engineering find this session
+  (`FIRMWARE_ANALYSIS.md`'s ADC/DMA section) that the original firmware
+  really does use the internal ADC + DMA for this — a search that
+  initially came up empty because the peripheral addresses are stored as
+  data and dereferenced at runtime, not embedded as literal instruction
+  operands. **Two placeholders, same honesty policy as the key-index
+  table**: which physical GPIOA pin (ADC channel) each knob is wired to
+  isn't confirmed (using channels 0-7 as a reasonable default), and the
+  per-knob CC number assignments aren't decoded yet either (using common
+  CC numbers 70-77 as placeholders — real values live in the per-program
+  SysEx-transferred record, not yet decoded).
+
 ## What's stubbed / not yet implemented
 
 - **The key-index lookup table** (see caveat above) — the single biggest
   remaining gap now that the rest of the key→MIDI pipeline exists.
-- **Knobs/CC**, **SysEx editor protocol**, **pedal/joystick handling** —
-  all still open per `FIRMWARE_ANALYSIS.md`'s "not yet analyzed" section;
-  tracked as tasks in this project's ongoing work.
+- **Knob ADC-channel and CC-number mappings** (see caveat above).
+- **SysEx editor protocol**, **pedal/joystick handling** — still open per
+  `FIRMWARE_ANALYSIS.md`'s "not yet analyzed" section; tracked as tasks in
+  this project's ongoing work.
 - What incoming MIDI (EP1 OUT) actually *does* — the plumbing exists
   (`usb_midi_on_receive`) but nothing consumes it yet.
 

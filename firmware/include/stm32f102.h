@@ -110,4 +110,56 @@ typedef struct {
 #define USB_EP_STAT_NAK      2u
 #define USB_EP_STAT_VALID    3u
 
+/* ---- ADC ---- */
+typedef struct {
+	__IO uint32_t SR;
+	__IO uint32_t CR1;
+	__IO uint32_t CR2;
+	__IO uint32_t SMPR1;
+	__IO uint32_t SMPR2;
+	__IO uint32_t JOFR[4];
+	__IO uint32_t HTR;
+	__IO uint32_t LTR;
+	__IO uint32_t SQR1;
+	__IO uint32_t SQR2;
+	__IO uint32_t SQR3;
+	__IO uint32_t JSQR;
+	__IO uint32_t JDR[4];
+	__IO uint32_t DR;
+} ADC_TypeDef;
+#define ADC1 ((ADC_TypeDef *)0x40012400u)
+
+#define ADC_CR2_ADON     (1u << 0)
+#define ADC_CR2_CONT     (1u << 1)
+#define ADC_CR2_CAL      (1u << 2)
+#define ADC_CR2_RSTCAL   (1u << 3)
+#define ADC_CR2_DMA      (1u << 8)
+#define ADC_CR2_EXTTRIG  (1u << 20)
+#define ADC_CR2_EXTSEL_SWSTART (0x7u << 17) /* SWSTART as trigger source */
+#define ADC_CR2_SWSTART  (1u << 22)
+#define RCC_APB2ENR_ADC1EN (1u << 9)
+
+/* ---- DMA ---- */
+typedef struct {
+	__IO uint32_t CCR;
+	__IO uint32_t CNDTR;
+	__IO uint32_t CPAR;
+	__IO uint32_t CMAR;
+	uint32_t RESERVED;
+} DMA_Channel_TypeDef;
+typedef struct {
+	__IO uint32_t ISR;
+	__IO uint32_t IFCR;
+	DMA_Channel_TypeDef CH[7]; /* channels 1..7 -> CH[0..6] */
+} DMA_TypeDef;
+#define DMA1 ((DMA_TypeDef *)0x40020000u)
+
+#define DMA_CCR_EN     (1u << 0)
+#define DMA_CCR_TCIE   (1u << 1)
+#define DMA_CCR_CIRC   (1u << 5)
+#define DMA_CCR_MINC   (1u << 7)
+#define DMA_CCR_PSIZE_16 (1u << 8)
+#define DMA_CCR_MSIZE_16 (1u << 10)
+#define RCC_AHBENR_DMA1EN (1u << 0)
+
 #endif /* STM32F102_H */
