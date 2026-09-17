@@ -1,5 +1,6 @@
 /*
- * Pad velocity sensing -> MIDI Note On/Off.
+ * Pad velocity sensing -> MIDI Note On/Off, Control Change, or Program
+ * Change, depending on the active pad output mode.
  *
  * Reimplements the confirmed shape of the original firmware's
  * FUN_08003ab8 (FIRMWARE_ANALYSIS.md's "Revised: pad velocity sensing"):
@@ -12,6 +13,12 @@
  * original's confirmed scaling formula: ((value - 0x80) * 0x7F) / 0x220,
  * clamped to 1-127.
  *
+ * Note/PC/CC number, and which of the three modes is active, now come
+ * from the decoded per-program record (program.c/program.h) instead of
+ * a standalone placeholder table -- see FIRMWARE_ANALYSIS.md's "Major
+ * new finding" section, which found this exact three-mode structure by
+ * reading FUN_08003ab8 in full.
+ *
  * NOT YET CONFIRMED (same placeholder-honesty policy as knobs.c/keys.c):
  *  - Which of the 8 ADC pad channels (adc_raw[ADC_NUM_CHANNELS + N])
  *    corresponds to which of the 8 physical pads -- using channel order
@@ -21,33 +28,24 @@
  *    12-bit adc_raw[] reading, as literally documented; the original
  *    may operate on a pre-scaled 8/10-bit derivative instead -- worth
  *    re-checking against real hardware captures).
- *  - Pad note-number assignments, which (like knob CC numbers) live in
- *    the per-program SysEx record, not yet decoded -- pad_base_note[]
- *    below uses a standard GM-drum-style base (C1=36) as a reasonable
- *    placeholder, not the original's actual defaults.
- *  - The record layout section of FIRMWARE_ANALYSIS.md ("Major new
- *    finding: 101-byte per-program record layout") found that each
- *    pad's config sub-record (record+0x0d + pad*8) can apparently
- *    select between sending a Note, a Program Change, or a Control
- *    Change per pad hit, via a shared mode byte -- this module only
- *    implements the Note case, matching what was already built here.
- *    Not revisited yet, since the mode-byte's own location isn't
- *    confirmed.
+ *  - What exactly happens on release in CC/PC mode. The original's
+ *    Note-mode release (Note Off) is confirmed; for CC/PC this module
+ *    approximates a reasonable behavior (CC value 0 on release, PC
+ *    fires once on hit only) rather than the original's exact bytes,
+ *    which weren't fully traced for those two branches.
+ *  - Whether the pad output mode is genuinely per-program stored data
+ *    at all -- see program.c's program_pad_mode() comment.
  */
 #include "pads.h"
 #include "adc.h"
 #include "midi_ring.h"
 #include "stuck_note.h"
+#include "program.h"
 
 #define ATTACK_THRESHOLD 0x80
 #define RELEASE_THRESHOLD 0x41
 #define VELOCITY_SCALE_BASE 0x80
 #define VELOCITY_SCALE_DIV 0x220
-#define MIDI_CHANNEL 0
-
-static const uint8_t pad_base_note[PADS_NUM] = {
-	36, 37, 38, 39, 40, 41, 42, 43, /* placeholder -- see file header */
-};
 
 static uint8_t pad_active[PADS_NUM];
 
@@ -58,19 +56,48 @@ void pads_init(void)
 	}
 }
 
-static void send_pad_note(uint8_t pad, uint8_t on, uint8_t velocity)
+static void send_pad_event(uint8_t pad, uint8_t on, uint8_t velocity)
 {
+	uint8_t channel = program_channel();
+	uint8_t mode = program_pad_mode();
 	uint8_t event[4];
-	event[0] = on ? 0x09 : 0x08; /* Cable 0, CIN: Note On / Note Off */
-	event[1] = (uint8_t)((on ? 0x90 : 0x80) | MIDI_CHANNEL);
-	event[2] = pad_base_note[pad];
-	event[3] = velocity;
-	midi_ring_push(event, 4);
 
-	if (on) {
-		stuck_note_on(MIDI_CHANNEL, pad_base_note[pad]);
-	} else {
-		stuck_note_off(MIDI_CHANNEL, pad_base_note[pad]);
+	switch (mode) {
+	case PAD_MODE_CC: {
+		uint8_t cc = program_pad_cc(pad);
+		event[0] = 0x0B; /* Cable 0, CIN: Control Change */
+		event[1] = (uint8_t)(0xB0 | channel);
+		event[2] = cc;
+		event[3] = on ? velocity : 0;
+		midi_ring_push(event, 4);
+		break;
+	}
+	case PAD_MODE_PC:
+		if (!on) {
+			return; /* fires once on hit, no release event */
+		}
+		event[0] = 0x0C; /* Cable 0, CIN: Program Change (2-byte message) */
+		event[1] = (uint8_t)(0xC0 | channel);
+		event[2] = program_pad_pc(pad);
+		event[3] = 0;
+		midi_ring_push(event, 4);
+		break;
+	case PAD_MODE_NOTE:
+	default: {
+		uint8_t note = program_pad_note(pad);
+		event[0] = on ? 0x09 : 0x08; /* Cable 0, CIN: Note On / Note Off */
+		event[1] = (uint8_t)((on ? 0x90 : 0x80) | channel);
+		event[2] = note;
+		event[3] = velocity;
+		midi_ring_push(event, 4);
+
+		if (on) {
+			stuck_note_on(channel, note);
+		} else {
+			stuck_note_off(channel, note);
+		}
+		break;
+	}
 	}
 
 	/* TODO: ESP32-C3 mirror hook, same as keys.c's send_note(). */
@@ -91,12 +118,12 @@ void pads_process(void)
 					scaled = 127;
 				}
 				pad_active[i] = 1;
-				send_pad_note((uint8_t)i, 1, (uint8_t)scaled);
+				send_pad_event((uint8_t)i, 1, (uint8_t)scaled);
 			}
 		} else {
 			if (value < RELEASE_THRESHOLD) {
 				pad_active[i] = 0;
-				send_pad_note((uint8_t)i, 0, 0);
+				send_pad_event((uint8_t)i, 0, 0);
 			}
 		}
 	}

@@ -5,9 +5,9 @@
 
 #define ARP_MAX_NOTES 8
 
-/* Off by default -- see arp.c's header comment. Nothing currently sets
- * this to 1; wiring it to a real trigger (a mode button, a decoded
- * program-record flag) is a follow-up. */
+/* Manual override, defaults to 1 -- actual enable is this ANDed with
+ * the current program's own arp-enabled flag (program_arp_enabled()).
+ * See arp.c's header comment. */
 extern uint8_t arp_enabled;
 
 void arp_init(void);

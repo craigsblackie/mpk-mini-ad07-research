@@ -4,15 +4,20 @@
  * Status: keys, pads, knobs, octave buttons, stuck-note cleanup, USB,
  * and the MIDI TX pipeline are all implemented (with documented
  * placeholders where real hardware data is still needed -- see each
- * module's header comment). The arpeggiator (arp.c) is a standalone
- * skeleton, not yet wired to key/pad input. SysEx editor protocol
- * (decoded, not yet reimplemented as firmware) is still TODO. See
- * FIRMWARE_ANALYSIS.md for what's confirmed vs. still unknown about
- * the original firmware's behavior in each of these areas.
+ * module's header comment). Per-knob CC numbers, per-pad note/CC/PC
+ * numbers, MIDI channel, and arp on/off/clock-division/tempo now come
+ * from a decoded per-program record (program.c) instead of standalone
+ * placeholder tables. The arpeggiator itself is still not wired to
+ * key/pad input. SysEx editor protocol (decoded, not yet reimplemented
+ * as firmware -- receiving/sending program configs over SysEx) is
+ * still TODO. See FIRMWARE_ANALYSIS.md for what's confirmed vs. still
+ * unknown about the original firmware's behavior in each of these
+ * areas.
  */
 #include "stm32f102.h"
 #include "matrix.h"
 #include "midi_ring.h"
+#include "program.h"
 #include "keys.h"
 #include "adc.h"
 #include "knobs.h"
@@ -67,6 +72,7 @@ int main(void)
 	clock_init();
 	matrix_init();
 	midi_ring_init();
+	program_init();
 	usb_init();
 	adc_init();
 

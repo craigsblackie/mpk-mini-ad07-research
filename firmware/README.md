@@ -58,47 +58,59 @@ land.
   really does use the internal ADC + DMA for this — a search that
   initially came up empty because the peripheral addresses are stored as
   data and dereferenced at runtime, not embedded as literal instruction
-  operands. **Two placeholders, same honesty policy as the key-index
-  table**: which physical GPIOA pin (ADC channel) each knob is wired to
-  isn't confirmed (using channels 0-7 as a reasonable default), and the
-  per-knob CC number assignments aren't decoded yet either (using common
-  CC numbers 70-77 as placeholders — real values live in the per-program
-  SysEx-transferred record, not yet decoded).
-- **Pad velocity sensing → MIDI Note On/Off** (`src/pads.c`): reimplements
-  the confirmed shape of the original's pad-velocity handler — attack/
-  release threshold hysteresis on each pad's ADC reading (channels 8-15,
-  the other half of the now-16-channel ADC scan), with the original's
-  documented velocity-scaling formula. Placeholders: which ADC channel
-  maps to which physical pad, and pad note-number assignments (same
-  per-program-record gap as knob CC numbers).
+  operands. Which physical GPIOA pin (ADC channel) each knob is wired to
+  still isn't confirmed (using channels 0-7 as a reasonable default).
+- **Pad velocity sensing → MIDI Note On/Off/CC/Program Change**
+  (`src/pads.c`): reimplements the confirmed shape of the original's
+  pad-velocity handler — attack/release threshold hysteresis on each
+  pad's ADC reading (channels 8-15, the other half of the 16-channel ADC
+  scan), with the original's documented velocity-scaling formula. Also
+  reimplements all three confirmed pad output modes (Note/CC/Program
+  Change), not just Note. Which ADC channel maps to which physical pad
+  still isn't confirmed.
 - **Octave up/down buttons** (`src/buttons.c`): reimplements the
   toggle-between-two-states pattern found in the original's button
   handler as an octave up/down offset (±4), applied to `keys.c`'s note
-  output. Placeholder: the actual input source/bit mapping isn't
-  confirmed — currently reads `matrix_state[7]`, one of the matrix
-  scanner's two "extra" columns, as a reasonable guess.
+  output. Input source is now **confirmed** — matrix column 8 (see
+  `buttons.c`'s header for how this was traced).
 - **Stuck-note safety net** (`src/stuck_note.c`): reimplements the
   original's 8-slot timeout mechanism — force-sends a Note Off for any
   key/pad note that's been held too long without a matching release.
   Wired into both `keys.c` and `pads.c`. Placeholder: the timeout
   duration/timebase isn't confirmed (counts main-loop iterations).
+- **Per-program configuration record** (`src/program.c`): the original's
+  own 101-byte per-program record, decoded field-by-field from
+  `FIRMWARE_ANALYSIS.md`'s "Major new finding" section and cross-checked
+  against the functions that actually consume it. `knobs.c`, `pads.c`,
+  and `arp.c` now read CC numbers, note/PC/CC assignments, MIDI channel,
+  and arp on/off/clock-division/tempo from here instead of standalone
+  placeholder tables — the *architecture* now matches the original
+  (per-program-configurable), even though the record's default field
+  *values* are still placeholders (no SysEx receive path exists yet to
+  load real ones — see below).
+- **Arpeggiator** (`src/arp.c`): steps ascending-only ("up" mode) through
+  currently-held notes, now gated on the program record's real arp
+  on/off flag and rate-scaled by its clock-division and tempo fields
+  (previously a fixed, always-off placeholder). Still partial: range,
+  direction mode, gate length, and latch aren't decoded, and there's no
+  timer peripheral yet to calibrate the tick rate against real
+  milliseconds (see `arp.c`'s header for the exact caveat). Still not
+  wired to key/pad input.
 
 ## What's stubbed / not yet implemented
 
 - **Dual-switch key velocity sensing** (see caveat above) — the key-index
   mapping itself is resolved; deriving real per-key velocity from the
   two-switch timing (rather than a fixed default) is the remaining gap.
-- **Knob ADC-channel/CC-number and pad ADC-channel/note-number mappings**
-  (see caveats above).
-- **Octave-button input source** (see caveat above).
-- **Arpeggiator** (`src/arp.c`): a standalone, functional but genuinely
-  partial skeleton — fixed-tempo ascending-only stepping over a held-note
-  set, not the original's actual tempo/range/direction/gate parameters
-  (those live in the undecoded per-program record). Not yet wired to
-  key/pad input (`arp_enabled` defaults to off, nothing calls
-  `arp_note_on()`/`arp_note_off()` yet).
+- **Knob and pad ADC-channel mappings** (see caveats above).
+- **A timer/tick peripheral driver** — nothing in this firmware has a
+  real wall-clock reference yet; `stuck_note.c`'s timeout and `arp.c`'s
+  step rate both count main-loop iterations as an uncalibrated stand-in.
 - **SysEx editor protocol** — decoded (see `FIRMWARE_ANALYSIS.md`), not
-  yet reimplemented as firmware.
+  yet reimplemented as firmware. This is the remaining big piece for
+  real feature parity: without it, `program.c`'s records can only ever
+  hold this firmware's own placeholder defaults, not configurations
+  loaded from AKAI's editor software or a replacement config UI.
 - What incoming MIDI (EP1 OUT) actually *does* — the plumbing exists
   (`usb_midi_on_receive`) but nothing consumes it yet.
 - There is no pitch-bend/mod-wheel/joystick handling because there is no

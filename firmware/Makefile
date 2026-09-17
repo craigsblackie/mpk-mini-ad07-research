@@ -7,7 +7,7 @@ CFLAGS = -mthumb -mcpu=cortex-m3 -Os -g3 -Wall -Wextra \
          -ffreestanding -nostdlib -Iinclude
 LDFLAGS = -Tlinker/stm32f102.ld -nostdlib -Wl,--gc-sections -Wl,-Map=build/$(TARGET).map
 
-SRCS = src/startup.c src/main.c src/matrix.c src/midi_ring.c src/keys.c src/adc.c src/knobs.c src/pads.c src/buttons.c src/stuck_note.c src/arp.c src/usb.c src/usb_descriptors.c
+SRCS = src/startup.c src/main.c src/matrix.c src/midi_ring.c src/program.c src/keys.c src/adc.c src/knobs.c src/pads.c src/buttons.c src/stuck_note.c src/arp.c src/usb.c src/usb_descriptors.c
 OBJS = $(patsubst src/%.c,build/%.o,$(SRCS))
 
 all: build/$(TARGET).elf build/$(TARGET).bin
