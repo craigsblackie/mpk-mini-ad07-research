@@ -36,15 +36,17 @@
  * clock division 0 (24 ticks = one quarter note), that's exactly
  * 500ms/step, a standard "1/4 note" arpeggiator rate.
  *
- * NOT WIRED UP YET: arp_note_on()/arp_note_off() aren't called from
- * anywhere -- keys.c and pads.c still send Note On/Off straight to
- * the MIDI ring buffer. Routing key/pad presses through here instead
- * when the program's arp flag is set is a follow-up.
+ * Wired to key input: keys.c's send_note() routes through
+ * arp_note_on()/arp_note_off() instead of sending directly whenever
+ * program_arp_enabled() is set. pads.c does not (a drum/pad arpeggiator
+ * isn't a feature this project found evidence for, and it's a less
+ * obviously useful one than key-triggered arpeggiation).
  */
 #include "arp.h"
 #include "midi_ring.h"
 #include "program.h"
 #include "systick.h"
+#include "stuck_note.h"
 
 /* record+0x06 (0-7) -> ticks-per-step, read directly from the
  * original's confirmed switch table (FIRMWARE_ANALYSIS.md). */
@@ -118,12 +120,19 @@ void arp_note_off(uint8_t note)
 
 static void send_event(uint8_t on, uint8_t note, uint8_t velocity)
 {
+	uint8_t channel = program_channel();
 	uint8_t event[4];
 	event[0] = on ? 0x09 : 0x08;
-	event[1] = (uint8_t)((on ? 0x90 : 0x80) | program_channel());
+	event[1] = (uint8_t)((on ? 0x90 : 0x80) | channel);
 	event[2] = note;
 	event[3] = velocity;
 	midi_ring_push(event, 4);
+
+	if (on) {
+		stuck_note_on(channel, note);
+	} else {
+		stuck_note_off(channel, note);
+	}
 }
 
 static uint32_t step_interval_ms(void)

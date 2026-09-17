@@ -46,6 +46,8 @@
 #include "midi_ring.h"
 #include "buttons.h"
 #include "stuck_note.h"
+#include "program.h"
+#include "arp.h"
 
 #define KEY_NONE 0xFF
 #define KEY_COUNT 25
@@ -103,6 +105,20 @@ static uint8_t note_for_key(uint8_t key_index)
 static void send_note(uint8_t key_index, uint8_t on, uint8_t velocity)
 {
 	uint8_t note = note_for_key(key_index);
+
+	if (program_arp_enabled()) {
+		/* Feed the arpeggiator instead of sending directly -- arp.c
+		 * generates its own Note On/Off stream from the held-note set.
+		 * This is the intended wiring point flagged in arp.c's header
+		 * as "not wired up yet". */
+		if (on) {
+			arp_note_on(note, velocity);
+		} else {
+			arp_note_off(note);
+		}
+		return;
+	}
+
 	uint8_t event[4];
 	event[0] = on ? 0x09 : 0x08; /* Cable 0, CIN: Note On / Note Off */
 	event[1] = (uint8_t)((on ? 0x90 : 0x80) | MIDI_CHANNEL);
@@ -123,7 +139,9 @@ static void send_note(uint8_t key_index, uint8_t on, uint8_t velocity)
 	 * inside midi_ring_push itself) keeps the ring buffer generic
 	 * and puts the mirror specifically at "a new key event was just
 	 * decided", matching where FUN_08006d54 sits in the original's
-	 * call graph relative to its callers. */
+	 * call graph relative to its callers. Also TODO: mirror the arp's
+	 * own output (arp.c's send_event()) the same way once that path
+	 * carries real traffic. */
 }
 
 static void handle_bit(uint8_t key_index, int bit, uint8_t released)

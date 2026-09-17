@@ -135,8 +135,13 @@ land.
   by its clock-division and tempo fields, with genuinely calibrated
   real-time step timing via `systick.c` (a step at 120 BPM with the
   default clock division is exactly 500ms — a standard "1/4 note" arp
-  rate). Still partial: gate length and latch parameters aren't
-  decoded. Still not wired to key/pad input.
+  rate). **Wired to key input**: `keys.c`'s `send_note()` routes
+  through `arp_note_on()`/`arp_note_off()` instead of sending directly
+  whenever the program's arp flag is set, so pressing keys now actually
+  drives the arpeggiator rather than it being a fully-implemented
+  engine nothing feeds. Not wired to pad input (no evidence the
+  original arpeggiates pad hits). Still partial: gate length and latch
+  parameters aren't decoded.
 
 ## What's stubbed / not yet implemented
 
