@@ -9,10 +9,10 @@
  * the USB-MIDI device described in usb_descriptors.c and move bulk
  * data on EP1.
  *
- * Status: EP0 control transfers (GET_DESCRIPTOR, SET_ADDRESS,
- * SET_CONFIGURATION) and EP1 IN (MIDI send) are implemented. EP1 OUT
- * (incoming MIDI) is enabled but not yet wired to anything -- TODO.
- * Not yet tested against real hardware.
+ * Status: EP0 control transfers (GET_DESCRIPTOR with multi-packet IN
+ * support, SET_ADDRESS, SET_CONFIGURATION), EP1 IN (MIDI send), and
+ * EP1 OUT (incoming MIDI, dispatched via the weak usb_midi_on_receive
+ * hook) are implemented. Not yet tested against real hardware.
  */
 #include "usb.h"
 #include "stm32f102.h"
@@ -103,6 +103,17 @@ static volatile uint8_t usb_address_pending;
 static volatile uint8_t usb_address_value;
 static volatile uint8_t usb_configured;
 
+/* Multi-packet EP0 IN transfer state -- a control transfer whose data
+ * stage exceeds EP0_MAX_PACKET (16 bytes) needs one call to
+ * ep0_send_chunk() per IN token; ctrl_tx_remaining tracks what's left
+ * to send after each one. ctrl_tx_need_zlp handles the case where the
+ * total length is an exact multiple of the max packet size (or zero),
+ * which per the USB spec requires a final zero-length packet so the
+ * host knows the transfer is complete rather than expecting more. */
+static const uint8_t *ctrl_tx_ptr;
+static uint16_t ctrl_tx_remaining;
+static uint8_t ctrl_tx_need_zlp;
+
 void usb_init(void)
 {
 	RCC->APB1ENR |= RCC_APB1ENR_USBEN;
@@ -132,20 +143,37 @@ void usb_init(void)
 	usb_configured = 0;
 }
 
+/* Sends the next EP0_MAX_PACKET-sized (or smaller, for the final
+ * chunk) piece of the pending control-transfer data, per
+ * ctrl_tx_ptr/ctrl_tx_remaining. Called both for the first packet
+ * (from ep0_send) and for each subsequent one (from usb_poll's CTR_TX
+ * handler). */
+static void ep0_send_chunk(void)
+{
+	uint16_t n = ctrl_tx_remaining < EP0_MAX_PACKET ? ctrl_tx_remaining : EP0_MAX_PACKET;
+
+	pma_write(EP0_TX_OFFSET, ctrl_tx_ptr, n);
+	*pma(BTABLE_OFFSET + 1) = n;
+
+	ctrl_tx_ptr += n;
+	ctrl_tx_remaining -= n;
+	if (n == EP0_MAX_PACKET && ctrl_tx_remaining == 0) {
+		/* exact multiple of the max packet size -- one more
+		 * (zero-length) packet is needed so the host doesn't wait
+		 * for a short packet that never comes. */
+		ctrl_tx_need_zlp = 1;
+	} else {
+		ctrl_tx_need_zlp = 0;
+	}
+
+	ep_set_stat_tx(0, USB_EP_STAT_VALID);
+}
+
 static void ep0_send(const uint8_t *data, uint16_t len, uint16_t requested_len)
 {
-	uint16_t n = len < requested_len ? len : requested_len;
-	if (n > EP0_MAX_PACKET) {
-		n = EP0_MAX_PACKET; /* TODO: multi-packet control transfers
-		                     * for descriptors > 16 bytes (config
-		                     * descriptor is 101 bytes) -- not yet
-		                     * implemented; needs IN-token-driven
-		                     * continuation, tracked against
-		                     * usb_poll()'s CTR_TX handling. */
-	}
-	pma_write(EP0_TX_OFFSET, data, n);
-	*pma(BTABLE_OFFSET + 1) = n;
-	ep_set_stat_tx(0, USB_EP_STAT_VALID);
+	ctrl_tx_ptr = data;
+	ctrl_tx_remaining = len < requested_len ? len : requested_len;
+	ep0_send_chunk();
 }
 
 static void handle_setup(void)
@@ -229,14 +257,26 @@ void usb_poll(void)
 					USB->DADDR = 0x80u | usb_address_value;
 					usb_address_pending = 0;
 				}
+				if (ctrl_tx_remaining > 0 || ctrl_tx_need_zlp) {
+					ep0_send_chunk();
+				}
 			}
 		} else if (ep == 1) {
 			uint32_t r = USB->EPR[1];
 			if (r & (1u << 15)) { /* CTR_RX: incoming MIDI on EP1 OUT */
 				USB->EPR[1] = r & 0x078Fu & ~(1u << 15);
-				/* TODO: read pma(EP1_RX_OFFSET) and hand off
-				 * received bytes somewhere -- not yet wired
-				 * up (see usb.h TODO). */
+
+				/* COUNT_RX's low 10 bits are the actual
+				 * received byte count; upper bits are the
+				 * fixed buffer-size config (RX_COUNT_64) and
+				 * must be masked off here. */
+				uint16_t count = *pma(BTABLE_OFFSET + 8 + 3) & 0x03FFu;
+				if (count > 0 && count <= EP1_MAX_PACKET) {
+					uint8_t rx_buf[EP1_MAX_PACKET];
+					pma_read(EP1_RX_OFFSET, rx_buf, count);
+					usb_midi_on_receive(rx_buf, count);
+				}
+
 				ep_set_stat_rx(1, USB_EP_STAT_VALID);
 			}
 			if (r & (1u << 7)) { /* CTR_TX: previous MIDI send completed */
@@ -260,4 +300,12 @@ void usb_midi_send(const uint8_t *data, size_t len)
 	pma_write(EP1_TX_OFFSET, data, (uint16_t)len);
 	*pma(BTABLE_OFFSET + 8 + 1) = (uint16_t)len; /* EP1's COUNT_TX slot */
 	ep_set_stat_tx(1, USB_EP_STAT_VALID);
+}
+
+__attribute__((weak)) void usb_midi_on_receive(const uint8_t *data, size_t len)
+{
+	(void)data;
+	(void)len;
+	/* Default: discard. Override elsewhere to do something with
+	 * incoming MIDI (see usb.h). */
 }

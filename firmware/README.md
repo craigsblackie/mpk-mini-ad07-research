@@ -29,28 +29,32 @@ land.
   real device, needed for class-compliant enumeration.
 - **USB device stack** (`src/usb.c`): minimal STM32F1 USB peripheral
   driver written from the public ST reference manual, not from the
-  original firmware's disassembly. Handles enough of EP0 (GET_DESCRIPTOR,
-  SET_ADDRESS, SET_CONFIGURATION) to enumerate, and EP1 IN for sending
-  MIDI. **Not yet tested against real hardware or a real USB host** — the
-  control-transfer state machine in particular is exactly the kind of code
-  that looks right on paper and has an off-by-one until it's actually
-  plugged in.
+  original firmware's disassembly. Handles EP0 (GET_DESCRIPTOR with
+  proper multi-packet IN support for descriptors over 16 bytes,
+  SET_ADDRESS, SET_CONFIGURATION) to enumerate, EP1 IN for sending MIDI,
+  and EP1 OUT for receiving it (dispatched via the weak
+  `usb_midi_on_receive()` hook in `usb.h` — override it to do something
+  with incoming MIDI; the default discards it). **Not yet tested against
+  real hardware or a real USB host** — the control-transfer state machine
+  in particular is exactly the kind of code that looks right on paper and
+  has an off-by-one until it's actually plugged in.
+- **Clock init** (`main.c`'s `clock_init()`): real HSE (8 MHz crystal,
+  confirmed from this project's board photos) + PLL ×6 → 48 MHz
+  SYSCLK/USBCLK, with correct flash wait-states. One flagged uncertainty:
+  the USBPRE bit polarity was documented from memory, not re-verified
+  against RM0008 this session.
 - Startup code, vector table, linker script: standard Cortex-M3/STM32F1
   boilerplate, the same shape as any STM32F1 project.
 
 ## What's stubbed / not yet implemented
 
 - **The key-index lookup table** (see caveat above) — the single biggest
-  remaining gap now that the edge-detection logic itself exists.
-- **Clock configuration.** Currently runs on the default 8 MHz HSI reset
-  clock. USB needs a precise 48 MHz (HSE + PLL) — not yet configured, so
-  USB will not actually work correctly yet despite the driver code being
-  present.
-- **Knobs/CC**, **SysEx editor protocol**, **pedal/joystick handling**,
-  **EP1 OUT (incoming MIDI) processing** — all still open per
-  `FIRMWARE_ANALYSIS.md`'s "not yet analyzed" section.
-- Multi-packet EP0 control transfers (the 101-byte config descriptor gets
-  truncated to 16 bytes right now — `ep0_send()`'s TODO).
+  remaining gap now that the rest of the key→MIDI pipeline exists.
+- **Knobs/CC**, **SysEx editor protocol**, **pedal/joystick handling** —
+  all still open per `FIRMWARE_ANALYSIS.md`'s "not yet analyzed" section;
+  tracked as tasks in this project's ongoing work.
+- What incoming MIDI (EP1 OUT) actually *does* — the plumbing exists
+  (`usb_midi_on_receive`) but nothing consumes it yet.
 
 ## Building
 
