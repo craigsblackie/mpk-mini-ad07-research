@@ -1214,3 +1214,34 @@ writer (this function) and the reader (`FUN_08003ab8`) sides.
 from a (never-confirmed) per-program field to the confirmed shared
 runtime variable it actually is, with a new `program_set_pad_mode()`.
 `buttons.c` rewritten to implement the confirmed bit 2/3 toggle logic.
+
+## Two more leads chased this pass, both stopped short of implementation
+
+**Column 8's bits 0/1** (`DAT_080045d0`, the flag/sentinel this
+document's column-8 section above left untraced): `get_xrefs_to` shows
+this address is read over 20 times within `FUN_08003ab8` (pad
+velocity) — far too many for a simple flag, and consistent with it
+being the *same* address as `DAT_08003e10`, a per-pad lookup table
+that function uses elsewhere for both ADC-channel indexing and
+velocity-curve lookups (both already reflected in this document's pad
+sections and `firmware/pads.c`'s own placeholders). Column 8's bits
+0/1 only write a single byte (element 0 of that table) to 0 or 1. This
+shape — a button forcing one specific pad's ADC channel index to a
+fixed test value — reads more like a **factory calibration/test hook**
+than a normal playing feature, but that's a guess, not a finding;
+not chased further or implemented.
+
+**Arp gate length / latch** (`FUN_08002588`'s `record+0x07` gate,
+referenced in this document's arpeggiator section as still open):
+re-examining it with the benefit of everything else resolved this
+session suggests `record+0x07` is more likely an **external-sync /
+editor-controlled-step-advance mode flag** than a musical gate-length
+parameter — its "else" branch requires a SysEx-related flag
+(`DAT_08002994[1] == 1`) and compares against values matching
+`record+0x06`/`+0x07` themselves, which doesn't fit a simple
+continuous gate-length control. This project found no clear evidence
+of a separate, user-facing gate-length or latch parameter distinct
+from what's already resolved (mode, range, clock division, tempo) --
+plausibly this firmware generation simply doesn't expose one (a fixed,
+effectively-legato gate, which `firmware/arp.c` already reimplements).
+Not implemented, since there's nothing confirmed to implement.
