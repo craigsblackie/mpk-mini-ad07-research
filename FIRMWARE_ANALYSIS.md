@@ -1073,3 +1073,29 @@ ascending-only skeleton. Gate length and latch (holding notes after
 key release) are referenced elsewhere in this function's surrounding
 logic but weren't traced closely enough this pass to implement with
 confidence — still open.
+
+## ADC channel ranges confirmed against AKAI's own schematic
+
+The last remaining "needs real hardware" item — which physical knobs
+and pads are wired to which ADC channels — turned out to be partially
+answerable from a resource already in this repo: `ad07-schematic-
+page7.jpg` (AKAI's own schematic, sheet "AD07_MPK8_V0.03"). Reading it
+directly (cropped and upscaled for legibility):
+
+- The "8KNOBS" section's connector is labeled with net names `ADC0`
+  through `ADC7`, one per potentiometer (VR1-VR8), in that pin order.
+- The "8 Dump PADs" section's two 4-pin connectors are labeled `ADC8`-
+  `ADC11` and `ADC12`-`ADC15`.
+
+This directly confirms the channel *ranges* this project's ADC/DMA
+finding had already inferred from the firmware side (knobs 0-7, pads
+8-15, not some other split) — two independent lines of evidence (the
+original firmware's own 16-channel scan behavior, and now AKAI's own
+schematic labels) agreeing is a good sign. **Not resolved**: the exact
+trace routing from each individual pad (PAD1-PAD8) to its specific
+channel within ADC8-15 — the schematic clearly shows non-trivial,
+crossing wire routing there, but this project's copy of the schematic
+isn't high enough resolution to read reliably pin-by-pin. Misreading
+that risks a confidently-wrong mapping, which is worse than leaving it
+an honest placeholder (numeric order, pad N = channel 8+N) — consistent
+with this project's standing policy throughout.

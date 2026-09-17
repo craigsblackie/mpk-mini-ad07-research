@@ -69,16 +69,20 @@ land.
   really does use the internal ADC + DMA for this — a search that
   initially came up empty because the peripheral addresses are stored as
   data and dereferenced at runtime, not embedded as literal instruction
-  operands. Which physical GPIOA pin (ADC channel) each knob is wired to
-  still isn't confirmed (using channels 0-7 as a reasonable default).
+  operands. The channel *range* is now confirmed against AKAI's own
+  schematic (`ad07-schematic-page7.jpg`, this repo) — knobs really are
+  ADC0-7 — though the exact per-knob trace routing within that range
+  isn't legible at this project's scan resolution (see `adc.c`'s
+  header).
 - **Pad velocity sensing → MIDI Note On/Off/CC/Program Change**
   (`src/pads.c`): reimplements the confirmed shape of the original's
   pad-velocity handler — attack/release threshold hysteresis on each
   pad's ADC reading (channels 8-15, the other half of the 16-channel ADC
-  scan), with the original's documented velocity-scaling formula. Also
-  reimplements all three confirmed pad output modes (Note/CC/Program
-  Change), not just Note. Which ADC channel maps to which physical pad
-  still isn't confirmed.
+  scan — also now schematic-confirmed as the right range), with the
+  original's documented velocity-scaling formula. Also reimplements all
+  three confirmed pad output modes (Note/CC/Program Change), not just
+  Note. Same caveat as knobs: which physical pad is which specific
+  channel within 8-15 isn't confirmed.
 - **Octave up/down buttons** (`src/buttons.c`): reimplements the
   toggle-between-two-states pattern found in the original's button
   handler as an octave up/down offset (±4), applied to `keys.c`'s note
@@ -145,7 +149,9 @@ land.
 
 ## What's stubbed / not yet implemented
 
-- **Knob and pad ADC-channel mappings** (see caveats above).
+- **Exact per-knob/per-pad ADC channel assignment within each confirmed
+  8-channel group** (see caveats above) — the channel *ranges* are
+  schematic-confirmed, the *order within* them isn't.
 - **SysEx editor protocol commands `` ` `` (raw dump capture) and `j`
   (device identification/bootstrap/factory-reset)** — not implemented
   (see `sysex.c`'s header for why). `a`, `b`, `c`, and `d` *are*

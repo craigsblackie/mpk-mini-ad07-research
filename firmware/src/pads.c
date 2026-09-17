@@ -20,9 +20,13 @@
  * reading FUN_08003ab8 in full.
  *
  * NOT YET CONFIRMED (same placeholder-honesty policy as knobs.c/keys.c):
- *  - Which of the 8 ADC pad channels (adc_raw[ADC_NUM_CHANNELS + N])
- *    corresponds to which of the 8 physical pads -- using channel order
- *    0-7 = pad 0-7 as a placeholder.
+ *  - Exactly which of the 8 ADC pad channels (adc_raw[ADC_NUM_CHANNELS
+ *    + N]) corresponds to which of the 8 physical pads. AKAI's own
+ *    schematic confirms the *group* (pads are ADC8-15, not some other
+ *    range -- see adc.c's header) but its trace routing between the
+ *    8 individual pads and ADC8-15 isn't legible at this project's
+ *    scan resolution; using numeric order (pad N = channel 8+N) as a
+ *    reasonable placeholder.
  *  - The exact bit-width/scaling the original's thresholds and formula
  *    operate on (this reimplementation applies them directly to the raw
  *    12-bit adc_raw[] reading, as literally documented; the original
