@@ -86,8 +86,25 @@ land.
   and arp on/off/clock-division/tempo from here instead of standalone
   placeholder tables — the *architecture* now matches the original
   (per-program-configurable), even though the record's default field
-  *values* are still placeholders (no SysEx receive path exists yet to
-  load real ones — see below).
+  *values* are still placeholders until real ones are loaded — see the
+  SysEx entry below, which now provides exactly that path.
+- **SysEx editor protocol — receive and send program configs**
+  (`src/sysex.c`): reassembles incoming USB-MIDI SysEx packets and
+  implements the `a` (write program), `b` (select program), and `c`
+  (read/dump program) commands against `program.c`'s record store,
+  including the exact byte-reorder table the wire format uses
+  (confirmed by reading the original's `FUN_08002eac` in full — an
+  earlier pass of this project's analysis had incorrectly guessed this
+  was a 7-bit nibble-packing scheme; it's actually a pure reorder of
+  the same 101 bytes, now corrected in `FIRMWARE_ANALYSIS.md`). This
+  means a real program dump sent by AKAI's official editor software (or
+  a replacement config tool) can now actually be received and applied,
+  not just a placeholder default — this was the single biggest gap for
+  behavioral parity as of the last update to this file. **Not yet
+  tested against a real SysEx sender** — the message framing and
+  reorder table are verified by construction (the encode/decode tables
+  are checked to be exact inverse permutations) but not against a real
+  captured dump from the official editor.
 - **Arpeggiator** (`src/arp.c`): steps ascending-only ("up" mode) through
   currently-held notes, now gated on the program record's real arp
   on/off flag and rate-scaled by its clock-division and tempo fields
@@ -106,11 +123,10 @@ land.
 - **A timer/tick peripheral driver** — nothing in this firmware has a
   real wall-clock reference yet; `stuck_note.c`'s timeout and `arp.c`'s
   step rate both count main-loop iterations as an uncalibrated stand-in.
-- **SysEx editor protocol** — decoded (see `FIRMWARE_ANALYSIS.md`), not
-  yet reimplemented as firmware. This is the remaining big piece for
-  real feature parity: without it, `program.c`'s records can only ever
-  hold this firmware's own placeholder defaults, not configurations
-  loaded from AKAI's editor software or a replacement config UI.
+- **SysEx editor protocol commands `` ` `` (raw dump capture), `d` and
+  `j` (device identification/bootstrap)** — not implemented (see
+  `sysex.c`'s header). `a` (write program), `b` (select program), and
+  `c` (read/dump program) *are* implemented — see below.
 - What incoming MIDI (EP1 OUT) actually *does* — the plumbing exists
   (`usb_midi_on_receive`) but nothing consumes it yet.
 - There is no pitch-bend/mod-wheel/joystick handling because there is no

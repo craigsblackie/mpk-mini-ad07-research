@@ -18,6 +18,7 @@
 #include "matrix.h"
 #include "midi_ring.h"
 #include "program.h"
+#include "sysex.h"
 #include "keys.h"
 #include "adc.h"
 #include "knobs.h"
@@ -73,6 +74,7 @@ int main(void)
 	matrix_init();
 	midi_ring_init();
 	program_init();
+	sysex_init();
 	usb_init();
 	adc_init();
 

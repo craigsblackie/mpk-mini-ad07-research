@@ -68,4 +68,22 @@ uint8_t program_pad_cc(uint8_t pad);
  * field. Returns PAD_MODE_NOTE/CC/PC. */
 uint8_t program_pad_mode(void);
 
+/*
+ * SysEx wire <-> record conversion.
+ *
+ * Reproduces the exact byte-reorder table read directly out of the
+ * original firmware's SysEx 'a' (write program) and 'c' (dump program)
+ * command handlers (FUN_08002eac) -- FIRMWARE_ANALYSIS.md's "Follow-up
+ * pass: full command set and wire encoding" section has the full
+ * derivation. It's a pure reorder (same 101 bytes both ways), not a
+ * bit-packing scheme, despite an earlier pass of that document
+ * guessing otherwise before the function was read in full.
+ *
+ * wire[] here is just the 101-byte payload -- the 8-byte message
+ * header (F0 47 <id> 7C <cmd> <len_hi> <len_lo> <program#>) and
+ * trailing F7 are sysex.c's concern, not this module's.
+ */
+void program_load_from_wire(uint8_t program_index, const uint8_t wire[PROGRAM_RECORD_SIZE]);
+void program_save_to_wire(uint8_t program_index, uint8_t wire[PROGRAM_RECORD_SIZE]);
+
 #endif /* PROGRAM_H */

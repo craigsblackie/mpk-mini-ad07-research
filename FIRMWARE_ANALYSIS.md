@@ -417,39 +417,63 @@ command set further:
 | `'b'` (`0x62`) | **Select program**: just sets a current-program-index byte, no bulk copy. High confidence. |
 | `'c'` (`0x63`) | **Read/dump program**: the mirror-image of `'a'` — copies from the internal 101-byte record back out into a SysEx reply buffer. High confidence. |
 
-**The `'a'`/`'c'` byte-shuffle tables reveal the wire encoding is not raw
-8-bit bytes.** The destination indices step through the SysEx buffer at a
-different stride than the source indices step through the internal
-record (e.g. record offsets 1,0,2,3,4,5,6,7,8,9,10,11,12,13,15,17,19,21...
-map to sequential SysEx-buffer positions, and beyond a point the *source*
-side starts incrementing by 2 per destination byte). This pattern — pairs
-of bytes on one side corresponding to single bytes on the other — is
-consistent with a **7-bit-safe SysEx encoding** (necessary because raw
-SysEx data bytes must be ≤ 0x7F; splitting each 8-bit value into two
-7-bit-safe nibbles roughly doubles the wire representation's size, which
-matches what's observed). The precise nibble-packing scheme (which bits
-go where) was not fully reverse-engineered this pass — confirmed to
-exist, not confirmed byte-exact.
+**Correction, with live Ghidra access restored: the wire encoding is NOT
+7-bit-nibble-packed.** The guess above (an earlier pass of this document,
+made from only a partial read of the byte-shuffle table) is disproven by
+reading `FUN_08002eac` in full. Counting every destination byte in the
+`'a'` handler's copy — the 14-byte direct-order header prefix, the
+31-byte odd-record-offset run, the 32-byte even-record-offset run, and
+the 24-byte direct-order knob-config tail — totals exactly **101 bytes**,
+matching the record size exactly, with no expansion. **It's a pure
+byte-for-byte reorder, not a bit-packing scheme.** Every wire byte is a
+real 8-bit data byte in the clear — which also means, incidentally, this
+protocol does *not* actually respect the usual SysEx 7-bit-data-byte
+convention (nothing in the handler masks or reassembles high bits), so
+it presumably relies on the specific byte values a program record can
+hold never exceeding 0x7F in practice, or on this being carried inside
+the message body rather than as strict MIDI SysEx data bytes.
+
+**Full reorder table, read directly off the decompiled copy loop**
+(`wire[n]` = byte `n` of the payload immediately following the 8-byte
+message header below; `record[n]` = byte `n` of the internal 101-byte
+record):
+
+- `wire[0..13]` → `record[1,0,2,3,4,5,6,7,8,9,10,11,12,13]` (14 bytes;
+  note the first two are swapped — `record[0]` comes from `wire[1]`,
+  `record[1]` from `wire[0]`).
+- `wire[14..44]` (31 bytes) → `record[15,17,19,...,75]` (every odd
+  offset from 0xF to 0x4B).
+- `wire[45..76]` (32 bytes) → `record[14,16,18,...,76]` (every even
+  offset from 0xE to 0x4C).
+- `wire[77..100]` (24 bytes) → `record[77..100]` directly (the knob
+  config region, `record+0x4D..0x64` — unshuffled).
+
+The `'c'` (dump) handler performs the exact inverse of this same table.
+**Full message framing**, also read directly off the handler: `F0 47
+<id> 7C <cmd> <len_hi> <len_lo> <program#> <101-byte payload> F7` — 110
+bytes total for `'a'`/`'c'` (8-byte header + 101-byte payload + 1
+trailing `F7`). This resolves what `puVar3[6] == 'n'` (`0x6E` = 110
+decimal) was gating on: a completeness check that the full 110-byte
+message has actually arrived before processing it — not a mysterious
+sentinel, just "expected total byte count."
 
 **One additional confirmed field**: near the end of the `'a'` handler,
 `*DAT_080032c4 = 60000 / (record[-0x1ee] + record[-0x1ef]*0x80)` — a
-BPM-to-milliseconds conversion (60,000 ms/min ÷ BPM), confirming the
-101-byte record stores a **per-program tempo** value (for the
-arpeggiator), at a byte pair offset from the record base consistent with
-being near its end (the negative offsets here are relative to a
-different base pointer than the record start; exact absolute offset
-within the 101 bytes not pinned down this pass).
+BPM-to-milliseconds conversion (60,000 ms/min ÷ BPM), matching the
+`record+0x0a`/`record+0x0b` tempo field independently confirmed via
+`FUN_08005ac8` (see the "Major new finding" section below) — third,
+independent cross-confirmation of that field.
 
 **What's still open**: the semantic meaning of most individual byte
-offsets within the 101-byte record (which ones are which knob's CC
-number, which are pad note assignments, key transpose, etc.) — only their
-*positions* in the transfer are confirmed, not their meaning, beyond the
-tempo field above and the knob-config bytes at `record+0x4D..0x4F`
-(cross-confirmed independently by the knob handler, `FUN_0800478c`,
-earlier in this document). A full field-by-field map would need either
-exhaustive manual correlation of the remaining byte-shuffle table entries
-against known AKAI editor software behavior, or empirical testing (send
-a SysEx dump, change one setting in the real editor, dump again, diff).
+offsets within the header region (`record+0x00..0x0c`, beyond the
+already-confirmed channel/arp-enable/clock-div/tempo fields) and the
+pad-region bytes beyond note/PC/CC (`record+0x0d..0x4c`, beyond the
+already-confirmed 3 fields per pad) — their *positions* in both the
+record and the wire transfer are now fully confirmed, not their
+complete meaning. With the reorder table above, `firmware/` can now
+actually receive and apply real program dumps from AKAI's editor
+software (see `program.c`'s SysEx receive support) even without knowing
+every field's meaning — unrecognized bytes just round-trip unchanged.
 
 ## Revised: octave/program buttons + device-initiated SysEx — `FUN_080044fc` (medium-high confidence)
 

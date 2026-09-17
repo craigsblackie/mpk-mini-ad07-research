@@ -122,3 +122,54 @@ uint8_t program_pad_mode(void)
 {
 	return programs[current_program].pad_mode;
 }
+
+/*
+ * SysEx wire<->record reorder tables. Generated (and its permutation
+ * property verified) from the exact copy sequence read out of the
+ * original's FUN_08002eac -- see program.h's comment and
+ * FIRMWARE_ANALYSIS.md for the full derivation. record_to_wire is the
+ * inverse permutation of wire_to_record.
+ */
+static const uint8_t WIRE_TO_RECORD[PROGRAM_RECORD_SIZE] = {
+	1, 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+	13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37,
+	39, 41, 43, 45, 47, 49, 51, 53, 55, 57, 59, 61, 63,
+	65, 67, 69, 71, 73, 75, 14, 16, 18, 20, 22, 24, 26,
+	28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52,
+	54, 56, 58, 60, 62, 64, 66, 68, 70, 72, 74, 76, 77,
+	78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90,
+	91, 92, 93, 94, 95, 96, 97, 98, 99, 100,
+};
+
+static const uint8_t RECORD_TO_WIRE[PROGRAM_RECORD_SIZE] = {
+	1, 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+	13, 45, 14, 46, 15, 47, 16, 48, 17, 49, 18, 50, 19,
+	51, 20, 52, 21, 53, 22, 54, 23, 55, 24, 56, 25, 57,
+	26, 58, 27, 59, 28, 60, 29, 61, 30, 62, 31, 63, 32,
+	64, 33, 65, 34, 66, 35, 67, 36, 68, 37, 69, 38, 70,
+	39, 71, 40, 72, 41, 73, 42, 74, 43, 75, 44, 76, 77,
+	78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90,
+	91, 92, 93, 94, 95, 96, 97, 98, 99, 100,
+};
+
+void program_load_from_wire(uint8_t program_index, const uint8_t wire[PROGRAM_RECORD_SIZE])
+{
+	if (program_index >= PROGRAM_COUNT) {
+		return;
+	}
+	uint8_t *raw = programs[program_index].raw;
+	for (int w = 0; w < PROGRAM_RECORD_SIZE; w++) {
+		raw[WIRE_TO_RECORD[w]] = wire[w];
+	}
+}
+
+void program_save_to_wire(uint8_t program_index, uint8_t wire[PROGRAM_RECORD_SIZE])
+{
+	if (program_index >= PROGRAM_COUNT) {
+		return;
+	}
+	const uint8_t *raw = programs[program_index].raw;
+	for (int r = 0; r < PROGRAM_RECORD_SIZE; r++) {
+		wire[RECORD_TO_WIRE[r]] = raw[r];
+	}
+}
