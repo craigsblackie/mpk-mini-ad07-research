@@ -114,9 +114,9 @@ reach:
 
 | Point | Notes |
 |---|---|
-| **C1 positive pad** | Best target. Largest pad on the net — the bulk electrolytic between FB1 and the regulator input |
+| **FB1, either pad** | Best target. 1806 package (4.5 x 1.6 mm), so larger pads than anything else on the net. A bead is a wire at DC, so both ends sit at 5 V |
+| **C1 positive pad** | Equally good. The bulk electrolytic between FB1 and the regulator input |
 | U1 pin 3 (VIN) | Also easy. SOT-223, 2.3 mm pitch, mechanically solid |
-| FB1 far pad | The end nearest C1 and U1 |
 | C4 pad | Small, but passive pads take solder readily |
 | C17 positive pad | Upstream of FB1 — see below. Only 1 uF, so a smaller pad |
 | CN1 pin 1 (VBUS) | Upstream of FB1, and fine-pitch |
@@ -135,6 +135,18 @@ Marginally better in principle, but both are smaller targets than C1, so it is
 usually harder rather than easier. Loading the bead is not a real concern:
 with the transmit power capped the ESP peaks around 150-180 mA on top of the
 keyboard's own draw.
+
+FB1 is specified in the service manual's BOM as a FENGHUA CBW451616U851,
+800 ohm at 100 MHz, rated **1 A**. The keyboard draws roughly 100 mA and the
+ESP peaks near 180 mA with the transmit cap in place, so tapping downstream of
+the bead loads it to about 280 mA of its 1 A rating -- not a concern either
+way.
+
+Expect the part itself to be uncertain. The schematic's own revision history
+records, at V0.02, *"Delect the FB1 & FB2 (No need and current limited)"*, yet
+the V0.06 sheet still carries FB1 in both the schematic and the BOM. Those
+disagree, so check what is actually fitted: a bead, a 0 ohm link, or bridged
+pads are all possible, and all three leave both pads at 5 V.
 
 **Verify before soldering.** Power the keyboard and measure between the chosen
 point and CN3 pin 1. About 5 V means the right net; about 3.3 V means the
