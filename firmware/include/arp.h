@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define ARP_MAX_NOTES 8
+#define ARP_MAX_NOTES 25
 
 /* Manual override, defaults to 1 -- actual enable is this ANDed with
  * the current program's own arp-enabled flag (program_arp_enabled()).
@@ -14,15 +14,15 @@ void arp_init(void);
 void arp_note_on(uint8_t note, uint8_t velocity);
 void arp_note_off(uint8_t note);
 void arp_process(void);
+void arp_all_off(void);
+void arp_midi_realtime(uint8_t byte);
 
-/* Registers one tap-tempo tap (call on each press of the tap-tempo
- * button -- see transport.c). Confirmed as a real original feature
- * (FUN_08006988), reimplemented simplified: this uses the interval
- * since the immediately preceding tap directly, rather than the
- * original's average over multiple recent taps (its confirmed
- * behavior, but the exact number of taps averaged wasn't reused here
- * -- see arp.c's header). Overrides the program's stored tempo until
- * ~2 seconds pass with no further taps. */
+/* Registers one tap. Once the configured 2-4 interval window is full,
+ * the rolling average overrides the stored tempo. */
 void arp_tap(void);
+
+/* Current quarter-note period, including the temporary tap-tempo
+ * override.  The original uses this period for the Tap Tempo LED. */
+uint32_t arp_beat_interval_ms(void);
 
 #endif /* ARP_H */

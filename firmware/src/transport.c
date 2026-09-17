@@ -1,6 +1,6 @@
 /*
- * Matrix column 7 button cluster: sustain pedal, octave up/down, tap
- * tempo.
+ * Matrix column 7: Arp modifier/toggle, Tap Tempo, Sustain/arp latch,
+ * Program modifier, and Octave Down/Up.
  *
  * Reimplements behavior found by fully tracing `FUN_08006988` (live
  * Ghidra access) -- a function this project had earlier only
@@ -23,48 +23,37 @@
  *   the **real octave up/down buttons**, on column 7, not column 8 as
  *   this project originally guessed (see buttons.c's header for that
  *   reinterpretation).
- * - **Bit 1** (mask 0x02) drives a **tap-tempo** calculation: each
- *   press logs an interval since the previous one into a small ring
- *   buffer, and once enough taps have accumulated (record+0x09,
- *   confirmed factory default 3 -- plausibly the tap count required,
- *   though this project didn't independently verify that specific
- *   role for the field), averages them into a tempo value clamped to
- *   250-2000ms per interval. Reimplemented simplified in arp.c's
- *   `arp_tap()`: this project's version uses the single most recent
- *   tap interval directly rather than an N-tap rolling average --
- *   same feature, simpler math, not a byte-exact port.
+ * - **Bit 1** (mask 0x02) drives tap tempo. Intervals are averaged over
+ *   record+0x09 samples and clamped to 250-2000 ms.
  * - **Bit 0** (mask 0x01): on release (transitioning away from a
  *   lone bit-0 press), the original does a literal `record[4] =
  *   (record[4] == 0)` -- an unconditional boolean flip of the arp
  *   on/off flag. Unambiguous: this is the **arp on/off toggle
  *   button**. Reimplemented as a simple edge-triggered toggle (the
- *   original's exact-equality-to-1 test on the whole byte, rather than
- *   a plain bitmask test, suggests its button codes may not be a true
- *   simultaneous bitmask -- not reproduced exactly, since a bit-based
- *   edge test is a faithful enough reimplementation of "press this
- *   button to toggle the arp").
- * - **Bit 3** (mask 0x08): entangled with the original's stuck-note-
- *   style cleanup array and several local state flags in a way this
- *   project couldn't resolve to a clean, confident feature description
- *   -- not reimplemented.
+ * - **Bit 3** (mask 0x08) is the Program modifier. Program plus the
+ *   four highest keys selects stored programs 1-4.
  */
 #include "transport.h"
 #include "midi_ring.h"
 #include "program.h"
 #include "arp.h"
+#include "keys.h"
 
 #define BIT_ARP_TOGGLE (1u << 0)
 #define BIT_TAP (1u << 1)
 #define BIT_SUSTAIN (1u << 2)
+#define BIT_PROGRAM (1u << 3)
 #define BIT_OCTAVE_DOWN (1u << 4)
 #define BIT_OCTAVE_UP (1u << 5)
 #define BOTH_OCTAVE_BITS (BIT_OCTAVE_DOWN | BIT_OCTAVE_UP)
 
 static uint8_t previous_status;
+static uint8_t arp_setting_used;
 
 void transport_init(void)
 {
 	previous_status = 0;
+	arp_setting_used = 0;
 }
 
 static void send_sustain(uint8_t on)
@@ -82,13 +71,25 @@ void transport_process(uint8_t status_byte)
 	uint8_t changed = status_byte ^ previous_status;
 	previous_status = status_byte;
 
-	if ((changed & BIT_ARP_TOGGLE) && !(status_byte & BIT_ARP_TOGGLE)) {
-		/* Original toggles on release, not press. */
-		program_toggle_arp_enabled();
+	if (changed & BIT_ARP_TOGGLE) {
+		if (status_byte & BIT_ARP_TOGGLE) {
+			arp_setting_used = 0;
+		} else {
+			arp_all_off();
+			if (!arp_setting_used) program_toggle_arp_enabled();
+		}
+	}
+	if ((changed & BIT_PROGRAM) && (status_byte & BIT_PROGRAM)) {
+		keys_all_off();
+		arp_all_off();
 	}
 
 	if (changed & BIT_SUSTAIN) {
-		send_sustain((status_byte & BIT_SUSTAIN) != 0);
+		if (program_arp_enabled()) {
+			if (status_byte & BIT_SUSTAIN) program_toggle_arp_latched();
+		} else {
+			send_sustain((status_byte & BIT_SUSTAIN) != 0);
+		}
 	}
 
 	if (changed & BIT_TAP) {
@@ -113,3 +114,7 @@ void transport_process(uint8_t status_byte)
 		}
 	}
 }
+
+uint8_t transport_program_held(void) { return (previous_status & BIT_PROGRAM) != 0; }
+uint8_t transport_arp_held(void) { return (previous_status & BIT_ARP_TOGGLE) != 0; }
+void transport_mark_arp_setting_used(void) { arp_setting_used = 1; }

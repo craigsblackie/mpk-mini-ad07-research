@@ -1,4 +1,5 @@
 #include "midi_ring.h"
+#include "midi_uart.h"
 
 static uint8_t buf[MIDI_RING_SIZE];
 static volatile size_t head; /* write index */
@@ -14,6 +15,8 @@ void midi_ring_init(void)
 
 int midi_ring_push(const uint8_t *data, size_t len)
 {
+	/* Bluetooth remains independent of USB configuration/backpressure. */
+	midi_uart_mirror_usb(data, len);
 	if (used + len > MIDI_RING_SIZE) {
 		return 0;
 	}

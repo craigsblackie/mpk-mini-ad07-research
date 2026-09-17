@@ -9,5 +9,6 @@ void keys_init(void);
  * transitions in matrix_state[] and pushes Note On/Off USB-MIDI
  * events to the MIDI ring buffer. */
 void keys_process(void);
+void keys_all_off(void);
 
 #endif /* KEYS_H */

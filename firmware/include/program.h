@@ -28,11 +28,16 @@ extern program_record_t programs[PROGRAM_COUNT];
 extern uint8_t current_program;
 
 void program_init(void);
+void program_select(uint8_t program_index);
+void program_persist(void);
+void program_reset_scratch(void);
+uint8_t program_factory_reset_performed(void);
 
 /* record+0x00: MIDI channel (0-15), confirmed shared by the knob
  * handler. Reused here for pads too (not independently confirmed for
  * pads -- a reasonable assumption of one MIDI channel per program). */
 uint8_t program_channel(void);
+uint8_t program_pad_channel(void);
 
 /* record+0x04: arp on/off. record+0x06: arp clock-division selector
  * (0-7), see FIRMWARE_ANALYSIS.md's confirmed tick/step table.
@@ -44,53 +49,59 @@ uint8_t program_channel(void);
  * count (`DAT_08002c98` vs. `DAT_0800299c` elsewhere in that function)
  * -- plausibly an "order played" mode, not independently confirmed;
  * see ARP_MODE_* below and FIRMWARE_ANALYSIS.md. record+0x0c: arp
- * octave range (0-3 additional octave repeats above the base pass,
- * confirmed via that same function's per-pass-completion increment
- * adding `range_pass * 12` semitones to the note before sending). */
+ * octave range (0-3 additional octave repeats above the base pass).
+ * The six mode values are 0=Up, 1=Down, 2=Exclusive, 3=Inclusive,
+ * 4=Random, and 5=Order. */
 uint8_t program_arp_enabled(void);
 /* Confirmed a real button toggles this directly (FUN_08006988 bit 0,
  * a literal `flag = (flag == 0)` boolean flip) -- see transport.c. */
 void program_toggle_arp_enabled(void);
 uint8_t program_arp_clock_div(void);
+void program_set_arp_clock_div(uint8_t division);
 uint16_t program_tempo_bpm(void);
 uint8_t program_arp_mode(void);
+void program_set_arp_mode(uint8_t mode);
 uint8_t program_arp_range(void);
+void program_set_arp_range(uint8_t range);
+uint8_t program_arp_external_clock(void);
+uint8_t program_arp_latched(void);
+void program_toggle_arp_latched(void);
+uint8_t program_tap_count(void);
 
 /* record+0x02/+0x03: the keyboard's base-note transpose, confirmed via
- * FUN_08004990 (the key edge detector)'s own note computation: `note =
- * key_index + record[2]*12 + record[3]`. record+0x02 (0-8, factory
- * default 4) is octave-scale (each unit = 12 semitones; default 4
- * lands key_index 0 on... the formula's default gives 4*12+12=60,
- * i.e. middle C, when record+0x03 is also at its factory default of
- * 12). record+0x03 (0-24, factory default 12) is a finer transpose
+ * FUN_08004990's note computation: `key + octave*12 + fine - 12`.
+ * record+0x02 (0-8, factory default 4) is octave-scale, while
+ * record+0x03 (0-24, factory default 12) is a finer transpose
  * within that. Confirmed via `FUN_08006988`'s transport-button
  * handler (see FIRMWARE_ANALYSIS.md) that record+0x02 specifically is
  * live-adjustable by two dedicated buttons (increment/decrement,
  * clamped 0-8) with a reset-to-4 combo -- i.e. these are the real
- * octave up/down buttons, on matrix column 7 (see transport.c), not
- * the column-8 buttons buttons.c implements (whose actual purpose is
- * now uncertain again -- see buttons.c's header). */
+ * octave up/down buttons, on matrix column 7. Column 8 selects pad bank
+ * and output mode. */
 uint8_t program_octave(void);
 uint8_t program_fine_transpose(void);
 void program_set_octave(uint8_t octave); /* clamped 0-8 */
 
 #define ARP_MODE_UP 0
 #define ARP_MODE_DOWN 1
-#define ARP_MODE_UP_DOWN 2
-#define ARP_MODE_DOWN_UP 3
+#define ARP_MODE_EXCLUSIVE 2
+#define ARP_MODE_INCLUSIVE 3
 #define ARP_MODE_RANDOM 4
 #define ARP_MODE_ORDER 5
 
 /* record+0x4d + knob*3: knob CC number (0 = knob unassigned, per the
  * original's confirmed "gate byte doubles as CC number" behavior). */
 uint8_t program_knob_cc(uint8_t knob);
+uint8_t program_knob_low(uint8_t knob);
+uint8_t program_knob_high(uint8_t knob);
 
-/* record+0x0d + pad*8: pad sub-record. +0x0 note#, +0x2 program-change
- * number, +0x4 CC number -- whichever is used depends on the active
- * pad output mode. */
+/* record+0x0d + pad*8: pad sub-record. +0/+1 are Bank A/B note#,
+ * +2/+3 are Bank A/B program-change numbers, and +4/+5 are Bank A/B
+ * CC numbers. Which pair is used depends on the active pad output mode. */
 uint8_t program_pad_note(uint8_t pad);
 uint8_t program_pad_pc(uint8_t pad);
 uint8_t program_pad_cc(uint8_t pad);
+uint8_t program_pad_toggle(uint8_t pad);
 
 /* CONFIRMED NOT part of the per-program record -- a single shared
  * runtime variable (SRAM 0x20000023), confirmed via get_xrefs_to: read
@@ -105,6 +116,11 @@ uint8_t program_pad_cc(uint8_t pad);
  * PAD_MODE_NOTE/CC/PC. */
 uint8_t program_pad_mode(void);
 void program_set_pad_mode(uint8_t mode);
+
+/* Shared runtime pad bank selected by the two column-8 bank buttons.
+ * The stock LED byte uses bit 0 for bank A and bit 1 for bank B. */
+uint8_t program_pad_bank(void);
+void program_set_pad_bank(uint8_t bank);
 
 /*
  * SysEx wire <-> record conversion.

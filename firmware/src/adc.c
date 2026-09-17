@@ -1,97 +1,73 @@
-/*
- * Knob ADC sampling: ADC1 in continuous scan mode, DMA1 channel 1
- * transferring results to SRAM in the background.
- *
- * Reimplemented from confirmed original-firmware behavior
- * (FIRMWARE_ANALYSIS.md's "Confirmed: knob sampling is ADC1 + DMA1"),
- * but simplified: the original software-triggers each conversion
- * batch and polls a DMA completion flag from the main loop; this
- * version uses ADC1's continuous-conversion mode instead, so DMA1
- * keeps adc_raw[] fresh autonomously with no per-iteration triggering
- * needed. Same peripherals, same end result (fresh raw ADC values
- * available every loop iteration), simpler control flow -- written
- * fresh, not copied from the disassembly.
- *
- * CONFIRMED (previously a placeholder): the full channel mapping, both
- * the ranges and the exact wiring within each group. AKAI's own
- * schematic (page 7 of the AD07 service manual, "AD07_MPK8 V0.03")
- * labels the knob connector's pins ADC0-ADC7 and the pad connectors'
- * pins ADC8-ADC15; reading a higher-resolution copy of that same page
- * traces every individual wire -- VR1..VR8 connect to ADC0..ADC7 and
- * PAD1..PAD8 connect to ADC8..ADC15, both in plain sequential order
- * (the wires bend at different points for PCB routing reasons, but
- * every one lands on the numerically-corresponding channel; an earlier
- * pass of this project, working from a lower-resolution copy, could
- * only confirm the two 8-channel *ranges*, not this exact ordering).
- * This matches the standard STM32F1 ADC12_IN0-15 GPIO mapping (PA0-7
- * for 0-7, PB0-1 + PC0-5 for 8-15 -- pins not otherwise used by the
- * key/pad matrix scanner in matrix.c, which owns PB8-15/PC7-15).
- *
- * The original reads 16 buffer slots, not 8 -- FIRMWARE_ANALYSIS.md's
- * pad-velocity section (FUN_08003ab8) revised this to most likely 8
- * knobs + 8 pad-velocity-sense channels, not unused headroom, and the
- * schematic independently confirms that revision was correct.
- */
+/* Stock cadence: four software-triggered 16-channel DMA scans, sum >> 4. */
 #include "adc.h"
 #include "stm32f102.h"
 
 volatile uint16_t adc_raw[ADC_TOTAL_CHANNELS];
+volatile uint32_t adc_generation;
+static uint16_t dma_samples[ADC_TOTAL_CHANNELS];
+static uint32_t sums[ADC_TOTAL_CHANNELS];
+static uint8_t batch_count;
+
+static void start_scan(void)
+{
+	DMA1->CH[0].CCR &= ~DMA_CCR_EN;
+	DMA1->IFCR = DMA_IFCR_CGIF1 | DMA_IFCR_CTCIF1 | DMA_IFCR_CHTIF1 | DMA_IFCR_CTEIF1;
+	DMA1->CH[0].CNDTR = ADC_TOTAL_CHANNELS;
+	DMA1->CH[0].CCR |= DMA_CCR_EN;
+	ADC1->CR2 |= ADC_CR2_SWSTART;
+}
 
 void adc_init(void)
 {
-	RCC->APB2ENR |= RCC_APB2ENR_IOPAEN | RCC_APB2ENR_IOPBEN | RCC_APB2ENR_IOPCEN | RCC_APB2ENR_ADC1EN;
+	RCC->APB2ENR |= RCC_APB2ENR_IOPAEN | RCC_APB2ENR_IOPBEN |
+	                RCC_APB2ENR_IOPCEN | RCC_APB2ENR_ADC1EN;
 	RCC->AHBENR |= RCC_AHBENR_DMA1EN;
+	GPIOA->CRL = 0;
+	GPIOB->CRL &= ~0x000000ffu;
+	GPIOC->CRL &= ~0x00ffffffu;
 
-	/* Analog input mode (CNF=00, MODE=00) on every pin used for ADC
-	 * input. PA0..PA7 (knobs): all of CRL. PB0..PB1 (pads): low byte
-	 * of CRL. PC0..PC5 (pads): low 3 bytes of CRL. */
-	GPIOA->CRL &= ~0xFFFFFFFFu;
-	GPIOB->CRL &= ~0x000000FFu;
-	GPIOC->CRL &= ~0x00FFFFFFu;
-
-	/* Regular sequence: 16 conversions -- channels 0-7 (knobs) then
-	 * 8-15 (pads), in order. SQR3 holds sequence positions 1-6 (5
-	 * bits each), SQR2 holds 7-12, SQR1 holds 13-16 plus the L field
-	 * (bits 20-23) = number of conversions - 1. */
-	ADC1->SQR3 = (0u << 0) | (1u << 5) | (2u << 10) | (3u << 15) | (4u << 20) | (5u << 25);
-	ADC1->SQR2 = (6u << 0) | (7u << 5) | (8u << 10) | (9u << 15) | (10u << 20) | (11u << 25);
+	ADC1->SQR3 = (0u << 0) | (1u << 5) | (2u << 10) | (3u << 15) |
+	             (4u << 20) | (5u << 25);
+	ADC1->SQR2 = (6u << 0) | (7u << 5) | (8u << 10) | (9u << 15) |
+	             (10u << 20) | (11u << 25);
 	ADC1->SQR1 = (12u << 0) | (13u << 5) | (14u << 10) | (15u << 15) |
 	             ((uint32_t)(ADC_TOTAL_CHANNELS - 1) << 20);
-
-	/* Sample time: max (239.5 cycles) for all channels -- neither
-	 * knobs nor pad-velocity sensing need speed, and a longer sample
-	 * time reduces noise. SMPR2 covers channels 0-9, SMPR1 covers
-	 * 10-17, 3 bits each. */
-	ADC1->SMPR2 = 0x3FFFFFFFu;
-	ADC1->SMPR1 = 0x00FFFFFFu;
-
-	ADC1->CR1 = 0; /* independent mode, scan handled via CR2 below */
+	ADC1->SMPR2 = 0x3fffffffu;
+	ADC1->SMPR1 = 0x00ffffffu;
+	ADC1->CR1 = (1u << 8); /* SCAN */
 	ADC1->CR2 = ADC_CR2_ADON;
-	for (volatile int i = 0; i < 1000; i++) {
-	} /* tREF wake-up time */
-
-	/* Calibration (recommended before first use, per RM0008). */
+	for (volatile uint16_t i = 0; i < 1000; i++) {}
 	ADC1->CR2 |= ADC_CR2_RSTCAL;
-	while (ADC1->CR2 & ADC_CR2_RSTCAL) {
-	}
+	while (ADC1->CR2 & ADC_CR2_RSTCAL) {}
 	ADC1->CR2 |= ADC_CR2_CAL;
-	while (ADC1->CR2 & ADC_CR2_CAL) {
+	while (ADC1->CR2 & ADC_CR2_CAL) {}
+
+	for (uint8_t i = 0; i < ADC_TOTAL_CHANNELS; i++) {
+		adc_raw[i] = 0;
+		sums[i] = 0;
 	}
-
-	/* DMA1 channel 1 (fixed hardware mapping for ADC1): peripheral =
-	 * ADC1->DR, memory = adc_raw[], circular, 16-bit, memory
-	 * increment, transfer-complete driven implicitly by circular
-	 * mode (no interrupt needed -- adc_raw[] is just always being
-	 * refreshed). */
+	batch_count = 0;
+	adc_generation = 0;
 	DMA1->CH[0].CPAR = (uint32_t)&ADC1->DR;
-	DMA1->CH[0].CMAR = (uint32_t)adc_raw;
-	DMA1->CH[0].CNDTR = ADC_TOTAL_CHANNELS;
-	DMA1->CH[0].CCR = DMA_CCR_MINC | DMA_CCR_CIRC | DMA_CCR_PSIZE_16 | DMA_CCR_MSIZE_16 | DMA_CCR_EN;
+	DMA1->CH[0].CMAR = (uint32_t)dma_samples;
+	DMA1->CH[0].CCR = DMA_CCR_MINC | DMA_CCR_PSIZE_16 | DMA_CCR_MSIZE_16;
+	ADC1->CR2 |= ADC_CR2_DMA | ADC_CR2_EXTTRIG | ADC_CR2_EXTSEL_SWSTART;
+	start_scan();
+}
 
-	/* Scan mode (bit 8 of CR1), continuous conversion, DMA, then
-	 * start -- ADC1 now free-runs, continuously refreshing adc_raw[]
-	 * via DMA with no further software intervention needed. */
-	ADC1->CR1 |= (1u << 8); /* SCAN */
-	ADC1->CR2 |= ADC_CR2_CONT | ADC_CR2_DMA | ADC_CR2_EXTTRIG | ADC_CR2_EXTSEL_SWSTART;
-	ADC1->CR2 |= ADC_CR2_SWSTART;
+void adc_process(void)
+{
+	if ((DMA1->ISR & DMA_ISR_TCIF1) == 0) return;
+	DMA1->CH[0].CCR &= ~DMA_CCR_EN;
+	DMA1->IFCR = DMA_IFCR_CGIF1 | DMA_IFCR_CTCIF1 | DMA_IFCR_CHTIF1 | DMA_IFCR_CTEIF1;
+	for (uint8_t i = 0; i < ADC_TOTAL_CHANNELS; i++) sums[i] += dma_samples[i] & 0x0fffu;
+	if (++batch_count >= 4) {
+		batch_count = 0;
+		for (uint8_t i = 0; i < ADC_TOTAL_CHANNELS; i++) {
+			adc_raw[i] = (uint16_t)(sums[i] >> 4);
+			sums[i] = 0;
+		}
+		adc_generation++;
+	}
+	start_scan();
 }

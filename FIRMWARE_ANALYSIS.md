@@ -5,6 +5,10 @@ Findings from reverse-engineering the extracted, verified firmware image
 analysis in our own words — not raw decompiler output, which is intentionally
 excluded from this repo (see `README.md`).
 
+This file records the investigation chronologically. Older passages retain
+some superseded hypotheses for provenance; the current implementation and
+hardware-validation status are summarized in `firmware/README.md`.
+
 Method: Ghidra 12.1 headless, `ARM:LE:32:Cortex`, base address `0x08000000`,
 default auto-analysis. Peripheral usage mapped by finding every code
 reference to the address range of each STM32F1 peripheral, then reading the
@@ -51,10 +55,9 @@ Behavior per scan cycle (9 iterations, one per column):
 3. Read `row_byte = GPIOB_IDR[15:8]` (upper byte of GPIOB).
 4. Compare against the previous reading for this column
    (`last_state[i]` in the SRAM table). If unchanged, increment a per-column
-   stability counter (capped at 0xF0); the **second** consecutive matching
-   read (counter == 1) is what actually gets latched as the debounced
-   result — a 1-sample debounce, i.e. requires the same electrical state on
-   two consecutive scans before it's trusted.
+   stability counter (capped at 0xF0). Columns 0-6 commit when the old count
+   is 1 (two confirmation reads); panel columns 7-8 commit when it is 7
+   (eight confirmation reads).
 5. On debounce-confirm: for columns 0–6, stores the inverted row byte into a
    result buffer at `debounced_result_base[i+3]`. Columns 7 and 8 are
    special-cased into two extra slots (`+2`, `+1`) — likely because those
@@ -63,10 +66,8 @@ Behavior per scan cycle (9 iterations, one per column):
 6. If the reading *changed* from last time: reset the stability counter to 0
    and update `last_state[i]` — restarts the debounce window.
 
-This runs guarded behind a single-shot flag (`*guard_byte == 0` at entry,
-set to 1 immediately) — the caller (not yet identified) presumably calls
-this once per main-loop iteration or timer tick, and this flag is likely
-cleared elsewhere to re-arm it; not yet confirmed.
+The scanner is called from the polling main loop; the guard byte prevents a
+second scan until the surrounding scheduler re-arms it.
 
 **Confidence: high.** Every address in the parameter table was verified
 against raw binary bytes, not just the decompiler's symbolic rendering (see
@@ -83,40 +84,29 @@ scanner above, and does something much more consequential at the end.
   section) — and reads `(~GPIOB_IDR & 0x3FFF) >> 8` with its own
   debounce loop (up to 99 consecutive stable reads, longer than the key
   scanner's single-sample debounce).
-- Calls `FUN_08000b68()` — **a checksum routine**: sums `0x77FE` (30,718)
-  bytes starting from a flash pointer, and compares the sum plus a trailing
-  stored value against zero (classic additive checksum-validates-to-zero
-  pattern). Very likely validating the application image before it's
-  considered safe to jump away from.
-- If the checksum passes (`FUN_08000b68() == 0`) **and** the debounced
-  column-7 row read isn't a specific sentinel value (`uVar3 != 8`, its
-  exact meaning as an "idle" pattern not resolved), calls
-  `FUN_08000728()` → `FUN_08000188()` (CMSIS `__set_MSP`-equivalent)
-  then jumps through a function pointer Ghidra couldn't statically
-  resolve. Set-MSP-then-jump is the textbook pattern for handing off to
-  a different firmware image or the ST system bootloader.
+- Calls `FUN_08000b68()` — the application checksum routine. It sums bytes
+  `0x08002000..0x080077fd`, adds the little-endian halfword at
+  `0x080077fe`, and requires zero modulo 65536.
+- If that checksum passes and the column-7 read is not `8`,
+  `FUN_08000728()` loads MSP and the reset vector through the vector table
+  pointer stored at `0x0800073c`: `0x08002000`. Thus flash
+  `0x08000000..0x08001fff` is the retained AKAI updater and the normal
+  application starts at `0x08002000`. The `8` sentinel is the PROGRAM-only
+  power-on gesture that keeps execution in the updater.
 
 **Confirmed this runs at the very start of reset**, before any of the
 application's own peripheral init: `get_xrefs_to` traces
 `FUN_08001cf0` → called unconditionally from `FUN_08001cd6` → called
 from a computed-call thunk at flash `0x0800013a`, right after the
-vector table. This is a genuine "hold a button in the column-7 cluster
-while powering on, and if the firmware checksum is valid, jump into
-the DFU/system bootloader" feature — a standard user-triggerable
-firmware-update-mode pattern, running before `main()` even starts.
+vector table. Hardware breakpoints and fault-frame inspection confirmed the
+handoff. The updater's trampoline sets MSP and then pops two words before
+branching, so the replacement vector advertises `_estack-8`; the pop leaves
+the application at the true RAM top. `Reset_Handler` then relocates VTOR to
+`0x08002000` before enabling exceptions.
 
-**Implemented in `firmware/bootloader.c`**, called from
-`Reset_Handler` before `main()`, matching the original's timing. The
-jump itself uses the standard, documented STM32F101/F102/F103
-medium-density system-memory bootloader address (`0x1FFFF000`, per
-ST's AN2606) rather than anything reverse-engineered — that part needed
-no guessing. What's reimplemented rather than ported exactly: the
-trigger condition (any button in the column-7 cluster held, debounced
-with clean pull-ups this firmware configures itself, rather than
-replicating the exact `!= 8` sentinel comparison against the original's
-specific pull configuration) and the checksum gate is not reimplemented
-at all (there's no analogous "is my own image corrupt" check that makes
-sense for firmware already running and about to voluntarily jump away).
+The open firmware now preserves the exact updater bytes rather than trying
+to reproduce them. Its build is an app-only `0x5800`-byte image with a
+patched checksum halfword, flashed at `0x08002000`.
 
 ## USB device driver — extensive, not yet mapped in detail
 
@@ -130,6 +120,71 @@ flash — these are usually identifiable as a contiguous run of small,
 structured byte sequences (descriptor length byte + descriptor type byte
 pattern) rather than code, and would immediately confirm the exact MIDI
 endpoint numbers/sizes without needing to trace the driver logic.
+
+### Confirmed: PA8 ("USB_UP") drives an external D+ pull-up — required for enumeration at all
+
+First real-hardware test of `firmware/`'s replacement stack found the board
+running normally (main loop, matrix scan, everything alive — confirmed via
+SWD: `reset run` + halt landed cleanly inside `matrix_scan()`, not stuck in
+`bootloader_check_entry()` as first suspected from a `reset halt` snapshot
+that turned out to just be the reset vector) but never enumerating over USB
+at all — no device-descriptor request, nothing in `journalctl -k`.
+
+The schematic (`akai.pdf` page 8, "AD07_MPK8 V0.04") explains why: the
+STM32F102/F103 USB peripheral has no internal D+ pull-up control (unlike
+newer ST families such as F0/L0 — RM0008's USB chapter has no pull-up-enable
+bit). This board instead uses the classic external-pull-up-plus-transistor
+pattern: a 1.5kΩ resistor (labelled near `USB_DP`) sits between +3.3V and
+D+, with an NPN transistor (2N3904, base driven via a 4.7kΩ pack `RP11`)
+able to override it. The transistor's base net is labelled `USB_UP` on the
+schematic and traces directly to MCU pin 41, whose alternate-function label
+is printed right there as `TIM1_CH1/PA8` — i.e. **PA8** is the pull-up
+control line, left in its GPIO role (not used for TIM1 here).
+
+`firmware/`'s USB stack never configured or drove this pin at all — PA8 sat
+at its GPIO reset default (floating input), an unpredictable state for a
+transistor base with a real chance of holding the pull-up permanently
+disabled, which fully explains total non-enumeration. Fixed in
+`firmware/src/usb.c`'s `usb_init()`: PA8 now configured push-pull output,
+driven low while the peripheral and endpoint table are initialized, then
+driven high to attach.
+
+The polarity is now hardware-confirmed, not inferred: the verified original
+firmware was reflashed as an A/B test and enumerated immediately on the same
+board, cable, and host. Its live GPIOA state was `CRH=0x28844442`,
+`ODR=0x0000a100`: PA8 is a 2 MHz push-pull output driven **high** while the
+device is attached. The replacement firmware now follows that sequence and
+also enumerates reliably.
+
+### Real-hardware USB bring-up: additional faults found and fixed
+
+The PA8 attach control was only the first blocker. Live SWD inspection of
+the failed replacement stack found and confirmed four more independent USB
+faults:
+
+- PMA words were advanced as adjacent C `uint16_t` objects, but STM32F1 PMA
+  exposes each 16-bit word in a 32-bit CPU slot. This overwrote the buffer
+  descriptor table: live `ADDR_TX`/`ADDR_RX` values read back as zero.
+- EP0's nominal 16-byte receive buffer used `COUNT_RX=0x0800`, which encodes
+  four bytes, not sixteen. It is now correctly encoded as `0x2000`.
+- USB registers were modeled as contiguous 32-bit values. They are 16-bit
+  registers on 32-bit spacing; EPnR in particular needs halfword accesses
+  for its write-zero/toggle-bit semantics.
+- `ep_set_stat_tx()` compared an unshifted status value with EPnR bits 5:4,
+  so every attempt to make EP0 TX VALID actually left it DISABLED. Once the
+  host could see the pull-up, this produced repeatable Linux descriptor-read
+  errors (`-32`/`-71`) and a captured but unanswered `SET_ADDRESS` packet.
+
+After these corrections the open firmware enumerated at full speed, Linux
+read the complete 101-byte configuration tree, `snd-usb-audio` exposed an
+ALSA raw-MIDI port, and a status-query SysEx completed in both directions:
+request `F0 47 00 7C 64 00 00 00 F7`, reply
+`F0 47 00 7C 64 00 01 00 F7`. Knob and pad input also produced live MIDI
+traffic. After the keybed was reconnected, live capture confirmed paired
+Note On/Off events across multiple pitches, held-note releases, and velocity
+variation from 1 through 99. Pad hits were also rechecked after the
+active-low matrix fix and correctly produced Note On/Off rather than the
+spurious Program Change mode seen during initial bring-up.
 
 ## RCC / AFIO / clock setup — not detailed, low priority
 
@@ -490,15 +545,15 @@ every field's meaning — unrecognized bytes just round-trip unchanged.
 Full trace revises the earlier "sustain pedal?" guess — this doesn't match
 that pattern at all on closer reading.
 
-**Later correction (see "Major correction: column 7 is a second button
-cluster" further down this document)**: this section's "octave
-up/down" interpretation for this function's bits 2/3 is superseded —
+**Later corrections (see "Major correction: column 7 is a second button
+cluster" and the LED section further down this document)**: this
+section's "octave up/down" interpretation for this function's bits 2/3 is superseded —
 column 7's `FUN_08006988`, traced in a later pass, has a much cleaner
 increment/decrement/reset-to-default mechanism directly confirmed
 against the real note-computation formula, and the actual sustain
 pedal turned out to be on column 7 too (CC 64, unambiguous). This
-function's real purpose is open again; left below as originally
-written for the record.
+bits 2/3 select pad CC/Program-Change modes, while bits 0/1 select pad
+Bank A/B. The original interpretation is left below for the record.
 
 - Reads a status byte, edge-detects against the previous value (standard
   pattern throughout this firmware).
@@ -821,20 +876,17 @@ original's accumulate-and-shift, this project's sum-and-average)
 converging on the same channel count and oversample factor is a good
 sign this project's earlier, less-certain ADC finding was correct.
 
-### `FUN_08004c90` — likely a pad output-mode status tracker (medium confidence)
+### `FUN_08004c90` — pad and panel LED-state builder (confirmed)
 
-Complex, only partially traced. **Correction**: an earlier pass of this
-document guessed this might feed `FUN_080044fc`'s SysEx status byte —
-disproven now that live Ghidra access confirmed `FUN_080044fc`'s status
-byte comes straight from the matrix scanner (see the octave-button
-resolution above), unrelated to this function. Re-characterized:
+This was initially only partially traced. Cross-referencing its two output
+bytes (`0x2000001e`/`0x2000001f`) into `FUN_080067f0` and then into the
+schematic confirms that they are the two 74HC164 LED shift-register bytes:
 
 - **First branch** (gated on a flag, `*DAT_08004da4 != 0`): decodes a
   command-like byte (`*DAT_08004db0`) into one-hot bitmasks written to
   two separate output bytes — values 1-8 set bits in one byte, 9-0x10
-  in the other, and 0x7f resets both to `0xFF`. Shaped like decoding a
-  received "select slot N" command (a host/editor command, or an
-  internal dispatch value) rather than anything GPIO-driven.
+  in the other, and 0x7f lights all 16. This is the stock LED diagnostic
+  path.
 - **Second branch** (the flag clear): iterates 8 slots, and for each,
   reads one of three record-relative bytes (offsets `+4`/`+6`/`+8` from
   a per-slot, stride-10 table) selected by a shared mode value
@@ -843,12 +895,9 @@ resolution above), unrelated to this function. Re-characterized:
   selection. Diffs each against a stored previous value and, on change,
   sets or clears the corresponding bit of an 8-bit output byte.
 
-**Best current guess**: a status-byte builder tracking which of the 8
-pads currently has an active/non-default value in whichever output mode
-(Note/PC/CC) is selected — plausibly feeding a host-facing "pad state"
-report, separate from `FUN_080044fc`'s octave-button message. Not
-confirmed which consumer reads the resulting byte; flagged for
-follow-up rather than relied on.
+The first output byte is therefore confirmed as the eight pad LEDs. Each
+bit follows the corresponding pad's active (or latched/toggle) runtime
+state for the selected Note/CC/PC mode.
 
 ## Resolved: the key-index lookup table and its indexing formula (high confidence)
 
@@ -1197,10 +1246,9 @@ cross-confirmed against the actual note-computation formula. Column
 and `program_toggle_arp_enabled()`, `keys.c`'s note formula now uses
 the octave/transpose accessors directly (replacing an earlier
 self-invented placeholder formula), `transport.c` implements column
-7's sustain pedal, octave buttons, arp on/off toggle, and tap-tempo
-trigger, and `arp.c` gained `arp_tap()` (a simplified single-interval
-tap tempo, not the original's N-tap rolling average, but the same
-real feature).
+7's sustain pedal, octave buttons, arp on/off toggle, PROGRAM modifier,
+and tap-tempo trigger. `arp.c` uses the record's 2-4 interval rolling
+average and the stock 250-2000 ms bounds.
 
 ## Column 8's real purpose resolved: pad output mode select
 
@@ -1215,13 +1263,11 @@ read count matching: two reads in each function's own disassembly) —
 already knew `FUN_08003ab8` consults (Note=1/CC=2/PC=3) but hadn't
 traced back to a writer.
 
-**Column 8's buttons are that variable's writers**, with confirmed
+**Column 8's mode buttons are that variable's writers**, with confirmed
 toggle logic: bit 2 toggles pad mode between CC and Note (if currently
 CC, back to Note; otherwise to CC); bit 3 does the same for Program
-Change. Bit 1 sets a local flag and a sentinel byte; bit 0 is the
-complement/idle case clearing that flag — both real, but their further
-effect wasn't traced (consumed by functions this project hasn't
-identified).
+Change. A later LED cross-reference resolves bits 0/1 as pad Bank A/B;
+their state chooses the paired value within each pad's Note/PC/CC fields.
 
 This retires this document's "Revised: column-8 buttons" section's
 octave interpretation for good — it wasn't the octave buttons (column
@@ -1234,33 +1280,39 @@ from a (never-confirmed) per-program field to the confirmed shared
 runtime variable it actually is, with a new `program_set_pad_mode()`.
 `buttons.c` rewritten to implement the confirmed bit 2/3 toggle logic.
 
-## Two more leads chased this pass, both stopped short of implementation
+## LED subsystem resolved — `FUN_080067f0` (high confidence)
 
-**Column 8's bits 0/1** (`DAT_080045d0`, the flag/sentinel this
-document's column-8 section above left untraced): `get_xrefs_to` shows
-this address is read over 20 times within `FUN_08003ab8` (pad
-velocity) — far too many for a simple flag, and consistent with it
-being the *same* address as `DAT_08003e10`, a per-pad lookup table
-that function uses elsewhere for both ADC-channel indexing and
-velocity-curve lookups (both already reflected in this document's pad
-sections and `firmware/pads.c`'s own placeholders). Column 8's bits
-0/1 only write a single byte (element 0 of that table) to 0 or 1. This
-shape — a button forcing one specific pad's ADC channel index to a
-fixed test value — reads more like a **factory calibration/test hook**
-than a normal playing feature, but that's a guess, not a finding;
-not chased further or implemented.
+The schematic and stock binary agree end-to-end:
 
-**Arp gate length / latch** (`FUN_08002588`'s `record+0x07` gate,
-referenced in this document's arpeggiator section as still open):
-re-examining it with the benefit of everything else resolved this
-session suggests `record+0x07` is more likely an **external-sync /
-editor-controlled-step-advance mode flag** than a musical gate-length
-parameter — its "else" branch requires a SysEx-related flag
-(`DAT_08002994[1] == 1`) and compares against values matching
-`record+0x06`/`+0x07` themselves, which doesn't fit a simple
-continuous gate-length control. This project found no clear evidence
-of a separate, user-facing gate-length or latch parameter distinct
-from what's already resolved (mode, range, clock division, tempo) --
-plausibly this firmware generation simply doesn't expose one (a fixed,
-effectively-legato gate, which `firmware/arp.c` already reimplements).
-Not implemented, since there's nothing confirmed to implement.
+- Two 74HC164 shift registers drive 16 NPN LED sinks. `S_CLK` is PB3,
+  `S_DAT0` is PB4, and `S_DAT1` is PB5. Data high turns the corresponding
+  LED on.
+- `FUN_080067f0` shifts the bytes at SRAM `0x2000001e` and `0x2000001f`
+  simultaneously, mask `0x80` down through `0x01`, with a low/high PB3
+  pulse per bit. Because the newest 74HC164 input becomes QA, ordinary
+  bit N maps to LED N despite the MSB-first wire order.
+- Byte 0 is the pad backlight byte built by `FUN_08004c90`; bits 0-7
+  follow pads 1-8's active/latch states.
+- Byte 1 is the panel-status byte: bit 0 Bank A, bit 1 Bank B, bit 2 CC,
+  bit 3 Program Change, bit 4 Arp On/Off, bit 5 Tap Tempo/beat, bit 6
+  Octave Down, and bit 7 Octave Up. The octave pair is mutually exclusive
+  away from the default octave and both clear at the default.
+- The stock tempo-phase code toggles bit 5 at half/full periods,
+  producing the Tap Tempo LED square wave. The factory-reset path writes
+  `0xff/0xff` then `0/0` three times, explaining the all-LED blink.
+
+Implemented in `firmware/src/leds.c`. PB3/PB4 are released from JTAG with
+the SWD-only AFIO remap (PA13/PA14 remain available to the Flipper), and
+PB3-PB5 use the stock 2 MHz push-pull configuration. On hardware, SWD read
+back confirmed `AFIO_MAPR=0x02000000`, the PB3-PB5 CRL nibbles at `0x2`,
+derived LED bytes `pads=0x00/status=0x01` at idle (Bank A), and final GPIOB
+ODR `0x0000ff28` (clock high, pad data low, status data high). USB and SysEx
+were then regression-tested successfully.
+
+## External arp clock and latch fields
+
+`record+0x07` selects external MIDI clock rather than a variable musical
+gate length; `record+0x08` is arp latch. The replacement consumes USB-MIDI
+Clock/Start/Continue/Stop for the external path, releases unheld notes when
+latch is disabled, and uses the stock half-step gate shape. No distinct
+user-configurable gate-length field exists in the 101-byte record.

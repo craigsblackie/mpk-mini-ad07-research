@@ -7,7 +7,7 @@ CFLAGS = -mthumb -mcpu=cortex-m3 -Os -g3 -Wall -Wextra \
          -ffreestanding -nostdlib -Iinclude
 LDFLAGS = -Tlinker/stm32f102.ld -nostdlib -Wl,--gc-sections -Wl,-Map=build/$(TARGET).map
 
-SRCS = src/startup.c src/bootloader.c src/main.c src/systick.c src/matrix.c src/midi_ring.c src/program.c src/sysex.c src/keys.c src/adc.c src/knobs.c src/pads.c src/buttons.c src/transport.c src/stuck_note.c src/arp.c src/usb.c src/usb_descriptors.c
+SRCS = src/startup.c src/main.c src/systick.c src/matrix.c src/leds.c src/midi_ring.c src/midi_uart.c src/program.c src/sysex.c src/keys.c src/adc.c src/knobs.c src/pads.c src/buttons.c src/transport.c src/arp.c src/usb.c src/usb_descriptors.c
 OBJS = $(patsubst src/%.c,build/%.o,$(SRCS))
 
 all: build/$(TARGET).elf build/$(TARGET).bin
@@ -22,8 +22,9 @@ build/%.o: src/%.c | build
 build/$(TARGET).elf: $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) -o $@
 
-build/$(TARGET).bin: build/$(TARGET).elf
-	$(OBJCOPY) -O binary $< $@
+build/$(TARGET).bin: build/$(TARGET).elf tools/patch_checksum.py
+	$(OBJCOPY) -O binary $< build/$(TARGET)-unsigned.bin
+	python3 tools/patch_checksum.py build/$(TARGET)-unsigned.bin $@
 
 clean:
 	rm -rf build

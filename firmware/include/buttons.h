@@ -4,7 +4,8 @@
 #include <stdint.h>
 
 /*
- * Matrix column 8 button cluster: pad output mode select (Note/CC/PC).
+ * Matrix column 8 button cluster: pad Bank A/B and output mode select
+ * (Note/CC/PC).
  * See buttons.c for the confirmed derivation.
  */
 void buttons_init(void);

@@ -16,16 +16,14 @@
  * program dump) using program.c's decoded record layout and wire
  * reorder table.
  *
- * Also implements 'd' (status/ack query -- replies with the current
- * program number).
- *
- * NOT implemented: '`' (raw payload capture -- doesn't appear to do
- * anything durable in the original either) and 'j' (device
- * identification/bootstrap/factory-reset) -- 'j' in particular writes
- * a large block of hardcoded initialization data and its reply uses a
- * different framing than the rest of this protocol, not fully
- * reconciled with the main header format (see FIRMWARE_ANALYSIS.md).
+ * Also implements 'd' status, 'j' bootstrap/reset, and the universal
+ * identity request used by the editor. Stock's '`' service payload is
+ * accepted and ignored; its handler has no observable durable effect.
  */
 void sysex_init(void);
+
+/* Feed a raw MIDI byte received from the ESP32 UART. Realtime messages
+ * are routed to the arp; complete SysEx messages share the USB handler. */
+void midi_input_byte(uint8_t byte);
 
 #endif /* SYSEX_H */

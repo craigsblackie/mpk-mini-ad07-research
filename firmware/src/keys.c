@@ -42,7 +42,7 @@
  * behavior (faster double-contact closure = higher velocity) is real.
  *
  * NOTE COMPUTATION: `note = key_index + program_octave()*12 +
- * program_fine_transpose()`, reproduced exactly from this same
+ * program_fine_transpose() - 12`, reproduced exactly from this same
  * function's confirmed formula (record+0x02 and record+0x03 -- see
  * program.h). This replaces an earlier, self-invented placeholder
  * formula (`keys_base_note + key_index + buttons_octave_offset*12`)
@@ -57,13 +57,13 @@
 #include "keys.h"
 #include "matrix.h"
 #include "midi_ring.h"
-#include "stuck_note.h"
 #include "program.h"
 #include "arp.h"
+#include "pads.h"
+#include "transport.h"
 
 #define KEY_NONE 0xFF
 #define KEY_COUNT 25
-#define MIDI_CHANNEL 0 /* channel 1 */
 
 #define KEY_IDLE 0
 #define KEY_ARMED 1
@@ -85,22 +85,30 @@ static uint8_t previous_state[MATRIX_COLS];
 static uint8_t key_state[KEY_COUNT];
 static uint16_t key_arm_tick[KEY_COUNT];
 static uint16_t scan_tick;
+static uint8_t key_suppressed[KEY_COUNT];
+static uint8_t key_note[KEY_COUNT];
+static uint8_t key_channel[KEY_COUNT];
+static uint8_t key_to_arp[KEY_COUNT];
 
 void keys_init(void)
 {
 	for (int i = 0; i < MATRIX_COLS; i++) {
-		previous_state[i] = 0;
+		previous_state[i] = 0xFFu; /* active-low matrix idle state */
 	}
 	for (int i = 0; i < KEY_COUNT; i++) {
 		key_state[i] = KEY_IDLE;
 		key_arm_tick[i] = 0;
+		key_suppressed[i] = 0;
+		key_note[i] = 0;
+		key_channel[i] = 0;
+		key_to_arp[i] = 0;
 	}
 	scan_tick = 0;
 }
 
 static uint8_t note_for_key(uint8_t key_index)
 {
-	int16_t note = (int16_t)key_index + (int16_t)program_octave() * 12 + program_fine_transpose();
+	int16_t note = (int16_t)key_index + (int16_t)program_octave() * 12 + program_fine_transpose() - 12;
 	if (note < 0) {
 		note = 0;
 	}
@@ -112,9 +120,41 @@ static uint8_t note_for_key(uint8_t key_index)
 
 static void send_note(uint8_t key_index, uint8_t on, uint8_t velocity)
 {
-	uint8_t note = note_for_key(key_index);
+	if (on && (transport_program_held() || transport_arp_held())) {
+		key_suppressed[key_index] = 1;
+		if (transport_program_held() && key_index >= 21 && key_index <= 24) {
+			keys_all_off();
+			pads_all_off();
+			arp_all_off();
+			program_select((uint8_t)(key_index - 20));
+		} else if (transport_arp_held()) {
+			if (key_index < 8) {
+				program_set_arp_clock_div(key_index);
+				transport_mark_arp_setting_used();
+			} else if (key_index >= 9 && key_index <= 14) {
+				static const uint8_t mode_map[6] = {0, 1, 3, 2, 5, 4};
+				program_set_arp_mode(mode_map[key_index - 9]);
+				transport_mark_arp_setting_used();
+			} else if (key_index >= 16 && key_index <= 19) {
+				program_set_arp_range((uint8_t)(key_index - 16));
+				transport_mark_arp_setting_used();
+			}
+		}
+		return;
+	}
+	if (!on && key_suppressed[key_index]) {
+		key_suppressed[key_index] = 0;
+		return;
+	}
 
-	if (program_arp_enabled()) {
+	if (on) {
+		key_note[key_index] = note_for_key(key_index);
+		key_channel[key_index] = program_channel();
+		key_to_arp[key_index] = program_arp_enabled();
+	}
+	uint8_t note = key_note[key_index];
+	uint8_t channel = key_channel[key_index];
+	if (key_to_arp[key_index]) {
 		/* Feed the arpeggiator instead of sending directly -- arp.c
 		 * generates its own Note On/Off stream from the held-note set.
 		 * This is the intended wiring point flagged in arp.c's header
@@ -129,27 +169,27 @@ static void send_note(uint8_t key_index, uint8_t on, uint8_t velocity)
 
 	uint8_t event[4];
 	event[0] = on ? 0x09 : 0x08; /* Cable 0, CIN: Note On / Note Off */
-	event[1] = (uint8_t)((on ? 0x90 : 0x80) | MIDI_CHANNEL);
+	event[1] = (uint8_t)((on ? 0x90 : 0x80) | channel);
 	event[2] = note;
-	event[3] = velocity;
+	event[3] = on ? velocity : 127;
 	midi_ring_push(event, 4);
 
-	if (on) {
-		stuck_note_on(MIDI_CHANNEL, note);
-	} else {
-		stuck_note_off(MIDI_CHANNEL, note);
-	}
+}
 
-	/* TODO: this is the intended mirror point for the ESP32-C3 BLE
-	 * MIDI project -- e.g.:
-	 *   usart1_send(&event[1], 3);
-	 * once USART1 output is implemented. Hooking here (rather than
-	 * inside midi_ring_push itself) keeps the ring buffer generic
-	 * and puts the mirror specifically at "a new key event was just
-	 * decided", matching where FUN_08006d54 sits in the original's
-	 * call graph relative to its callers. Also TODO: mirror the arp's
-	 * own output (arp.c's send_event()) the same way once that path
-	 * carries real traffic. */
+void keys_all_off(void)
+{
+	for (uint8_t i = 0; i < KEY_COUNT; i++) {
+		if (key_state[i] == KEY_FIRED && !key_suppressed[i]) {
+			if (key_to_arp[i]) {
+				arp_note_off(key_note[i]);
+			} else {
+				uint8_t event[4] = {0x08, (uint8_t)(0x80 | key_channel[i]), key_note[i], 127};
+				midi_ring_push(event, 4);
+			}
+		}
+		key_state[i] = KEY_IDLE;
+		key_suppressed[i] = 0;
+	}
 }
 
 static void handle_bit(uint8_t key_index, int bit, uint8_t released)

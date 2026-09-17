@@ -45,6 +45,7 @@ typedef struct {
 #define RCC_APB2ENR_IOPAEN  (1u << 2)
 #define RCC_APB2ENR_IOPBEN  (1u << 3)
 #define RCC_APB2ENR_IOPCEN  (1u << 4)
+#define RCC_APB2ENR_USART1EN (1u << 14)
 #define RCC_APB1ENR_USBEN   (1u << 23)
 
 #define RCC_CR_HSEON    (1u << 16)
@@ -66,9 +67,22 @@ typedef struct {
 /* ---- FLASH interface (for wait-state config at higher clocks) ---- */
 typedef struct {
 	__IO uint32_t ACR;
+	__IO uint32_t KEYR;
+	__IO uint32_t OPTKEYR;
+	__IO uint32_t SR;
+	__IO uint32_t CR;
+	__IO uint32_t AR;
 } FLASH_TypeDef;
 #define FLASH_IF ((FLASH_TypeDef *)0x40022000u)
 #define FLASH_ACR_LATENCY_2 0x2u /* 2 wait states, required for 48-72 MHz per RM0008 */
+#define FLASH_SR_BSY       (1u << 0)
+#define FLASH_SR_PGERR     (1u << 2)
+#define FLASH_SR_WRPRTERR  (1u << 4)
+#define FLASH_SR_EOP       (1u << 5)
+#define FLASH_CR_PG        (1u << 0)
+#define FLASH_CR_PER       (1u << 1)
+#define FLASH_CR_STRT      (1u << 6)
+#define FLASH_CR_LOCK      (1u << 7)
 
 /* ---- GPIO ---- */
 typedef struct {
@@ -84,18 +98,66 @@ typedef struct {
 #define GPIOB ((GPIO_TypeDef *)0x40010C00u)
 #define GPIOC ((GPIO_TypeDef *)0x40011000u)
 
+/* ---- Alternate-function I/O ---- */
+typedef struct {
+	__IO uint32_t EVCR;
+	__IO uint32_t MAPR;
+} AFIO_TypeDef;
+#define AFIO ((AFIO_TypeDef *)0x40010000u)
+
+/* PB3/PB4 power up as JTAG pins.  The LED shift registers use those
+ * pins, while SWD itself only needs PA13/PA14, so select SWD-only. */
+#define AFIO_MAPR_SWJ_CFG_MASK     (7u << 24)
+#define AFIO_MAPR_SWJ_CFG_SWD_ONLY (2u << 24)
+
+/* ---- USART ---- */
+typedef struct {
+	__IO uint32_t SR;
+	__IO uint32_t DR;
+	__IO uint32_t BRR;
+	__IO uint32_t CR1;
+	__IO uint32_t CR2;
+	__IO uint32_t CR3;
+	__IO uint32_t GTPR;
+} USART_TypeDef;
+#define USART1 ((USART_TypeDef *)0x40013800u)
+
+#define USART_SR_FE   (1u << 1)
+#define USART_SR_NE   (1u << 2)
+#define USART_SR_ORE  (1u << 3)
+#define USART_SR_RXNE (1u << 5)
+#define USART_SR_TXE  (1u << 7)
+#define USART_CR1_RE  (1u << 2)
+#define USART_CR1_TE  (1u << 3)
+#define USART_CR1_UE  (1u << 13)
+
 /* ---- USB device peripheral ---- */
 typedef struct {
-	__IO uint32_t EPR[8];
+	__IO uint16_t VALUE;
+	uint16_t RESERVED;
+} USB_Reg16_TypeDef;
+
+typedef struct {
+	USB_Reg16_TypeDef EPR[8];
 	uint32_t RESERVED[8];
-	__IO uint32_t CNTR;
-	__IO uint32_t ISTR;
-	__IO uint32_t FNR;
-	__IO uint32_t DADDR;
-	__IO uint32_t BTABLE;
+	USB_Reg16_TypeDef CNTR;
+	USB_Reg16_TypeDef ISTR;
+	USB_Reg16_TypeDef FNR;
+	USB_Reg16_TypeDef DADDR;
+	USB_Reg16_TypeDef BTABLE;
 } USB_TypeDef;
 #define USB ((USB_TypeDef *)0x40005C00u)
 #define USB_PMA_BASE 0x40006000u
+
+/* STM32F1 USB registers are 16-bit values spaced on 32-bit addresses.
+ * Accessing EPnR as a 32-bit C object breaks its write-zero/toggle-bit
+ * semantics on real hardware. */
+#define USB_EPR(ep)   (USB->EPR[(ep)].VALUE)
+#define USB_CNTR_REG  (USB->CNTR.VALUE)
+#define USB_ISTR_REG  (USB->ISTR.VALUE)
+#define USB_FNR_REG   (USB->FNR.VALUE)
+#define USB_DADDR_REG (USB->DADDR.VALUE)
+#define USB_BTABLE_REG (USB->BTABLE.VALUE)
 
 #define USB_CNTR_FRES   (1u << 0)
 #define USB_CNTR_PDWN   (1u << 1)
@@ -166,5 +228,10 @@ typedef struct {
 #define DMA_CCR_PSIZE_16 (1u << 8)
 #define DMA_CCR_MSIZE_16 (1u << 10)
 #define RCC_AHBENR_DMA1EN (1u << 0)
+#define DMA_ISR_TCIF1    (1u << 1)
+#define DMA_IFCR_CGIF1   (1u << 0)
+#define DMA_IFCR_CTCIF1  (1u << 1)
+#define DMA_IFCR_CHTIF1  (1u << 2)
+#define DMA_IFCR_CTEIF1  (1u << 3)
 
 #endif /* STM32F102_H */

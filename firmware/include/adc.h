@@ -12,7 +12,9 @@
  * Index 0..ADC_NUM_CHANNELS-1: knobs. Index ADC_NUM_CHANNELS..
  * ADC_TOTAL_CHANNELS-1: pads (see pads.h). */
 extern volatile uint16_t adc_raw[ADC_TOTAL_CHANNELS];
+extern volatile uint32_t adc_generation;
 
 void adc_init(void);
+void adc_process(void);
 
 #endif /* ADC_H */

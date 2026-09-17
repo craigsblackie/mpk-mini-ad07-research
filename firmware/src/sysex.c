@@ -23,6 +23,9 @@
 #include "usb.h"
 #include "midi_ring.h"
 #include "program.h"
+#include "pads.h"
+#include "keys.h"
+#include "arp.h"
 
 #define SYSEX_MAX_LEN 128
 #define MSG_TOTAL_LEN 110 /* 'a'/'c': 8-byte header + 101-byte payload + F7 */
@@ -92,7 +95,7 @@ static void send_dump(uint8_t program_index)
 	msg[3] = 0x7C;
 	msg[4] = 'c';
 	msg[5] = 0x00;
-	msg[6] = MSG_TOTAL_LEN;
+	msg[6] = 0x66; /* stock length is program byte + 101-byte record */
 	msg[7] = program_index;
 
 	uint8_t wire[PROGRAM_RECORD_SIZE];
@@ -103,6 +106,30 @@ static void send_dump(uint8_t program_index)
 	msg[MSG_TOTAL_LEN - 1] = 0xF7;
 
 	pack_and_send(msg, MSG_TOTAL_LEN);
+}
+
+static void all_notes_off(void)
+{
+	keys_all_off();
+	pads_all_off();
+	arp_all_off();
+}
+
+static void send_bootstrap(void)
+{
+	uint8_t msg[14] = {0xF0,0x47,last_id,0x7C,'j',0x00,0x06,
+	                   0x7F,0x02,0x00,0x00,0x00,0x64,0xF7};
+	pack_and_send(msg, sizeof msg);
+}
+
+static void send_editor_probe(void)
+{
+	uint8_t msg[35];
+	for (uint8_t i = 0; i < sizeof msg; i++) msg[i] = 0;
+	msg[0] = 0xf0; msg[1] = 0x7e; msg[2] = program_channel(); msg[3] = 0x06;
+	msg[4] = 0x02; msg[5] = 0x47; msg[6] = 0x7c; msg[8] = 0x19;
+	msg[12] = 'd'; msg[13] = last_id; msg[34] = 0xf7;
+	pack_and_send(msg, sizeof msg);
 }
 
 /* 'd' (status/ack query) reply: F0 47 <id> 7C 'd' 00 01 <current
@@ -131,6 +158,13 @@ static void send_status(void)
 
 static void sysex_process(void)
 {
+	/* The universal identity request is only six bytes, shorter than an
+	 * AKAI command header, so it must be recognized before that guard. */
+	if (sysex_len >= 6 && sysex_buf[0] == 0xf0 && sysex_buf[1] == 0x7e &&
+	    sysex_buf[3] == 0x06 && sysex_buf[4] == 0x01) {
+		send_editor_probe();
+		return;
+	}
 	if (sysex_len < HEADER_LEN + 1) {
 		return;
 	}
@@ -147,6 +181,14 @@ static void sysex_process(void)
 		send_status();
 		return;
 	}
+	if (cmd == 'j' && sysex_buf[5] == 0 && sysex_buf[6] == 2 &&
+	    sysex_buf[7] == 0x7f && sysex_buf[8] == 1) {
+		all_notes_off();
+		program_reset_scratch();
+		program_select(0);
+		send_bootstrap();
+		return;
+	}
 
 	uint8_t program_index = sysex_buf[7];
 	if (program_index >= PROGRAM_COUNT) {
@@ -155,20 +197,25 @@ static void sysex_process(void)
 
 	switch (cmd) {
 	case 'b': /* select program -- no payload */
-		current_program = program_index;
+		all_notes_off();
+		program_select(program_index);
 		break;
 	case 'a': /* write program -- 101-byte payload follows the header */
-		if (sysex_len == MSG_TOTAL_LEN) {
+		if (sysex_len == MSG_TOTAL_LEN && sysex_buf[5] == 0 && sysex_buf[6] == 0x66) {
+			all_notes_off();
 			program_load_from_wire(program_index, &sysex_buf[HEADER_LEN]);
-			current_program = program_index;
+			program_select(program_index);
+			if (program_index != 0) program_persist();
 		}
 		break;
 	case 'c': /* read/dump program -- reply with the same format 'a' sends */
+		all_notes_off();
+		program_select(program_index);
 		send_dump(program_index);
 		break;
 	default:
-		/* '`', 'j', and the '~'-prefixed sub-protocol are not
-		 * implemented -- see sysex.h's header comment. */
+		/* Stock accepts '`' as a raw service payload without a reply;
+		 * unknown commands are likewise ignored. */
 		break;
 	}
 }
@@ -176,33 +223,31 @@ static void sysex_process(void)
 static void handle_event(const uint8_t event[4])
 {
 	uint8_t cin = (uint8_t)(event[0] & 0x0F);
+	static const uint8_t cin_bytes[16] = {
+		0, 0, 2, 3, 3, 1, 2, 3, 3, 3, 3, 3, 2, 2, 3, 1
+	};
+	uint8_t count = cin_bytes[cin];
+	if (cin < 4 && cin != 0x0f) return;
+	for (uint8_t i = 0; i < count; i++) midi_input_byte(event[1 + i]);
+}
 
-	switch (cin) {
-	case 0x4:
-		sysex_append(event[1]);
-		sysex_append(event[2]);
-		sysex_append(event[3]);
-		break;
-	case 0x5:
-		sysex_append(event[1]);
+void midi_input_byte(uint8_t byte)
+{
+	/* MIDI realtime bytes may legally occur inside a SysEx stream. */
+	if (byte >= 0xf8u) {
+		arp_midi_realtime(byte);
+		return;
+	}
+	if (byte == 0xf0u) {
+		sysex_reset();
+		sysex_append(byte);
+		return;
+	}
+	if (sysex_len == 0) return; /* channel/system-common input is unused */
+	sysex_append(byte);
+	if (byte == 0xf7u) {
 		sysex_process();
 		sysex_reset();
-		break;
-	case 0x6:
-		sysex_append(event[1]);
-		sysex_append(event[2]);
-		sysex_process();
-		sysex_reset();
-		break;
-	case 0x7:
-		sysex_append(event[1]);
-		sysex_append(event[2]);
-		sysex_append(event[3]);
-		sysex_process();
-		sysex_reset();
-		break;
-	default:
-		break; /* not a SysEx CIN -- not this module's concern */
 	}
 }
 

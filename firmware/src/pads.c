@@ -1,133 +1,179 @@
-/*
- * Pad velocity sensing -> MIDI Note On/Off, Control Change, or Program
- * Change, depending on the active pad output mode.
- *
- * Reimplements the confirmed shape of the original firmware's
- * FUN_08003ab8 (FIRMWARE_ANALYSIS.md's "Revised: pad velocity sensing"):
- * each pad's ADC channel is compared against two thresholds with
- * hysteresis (attack: value > 0x80, release: value < 0x41) rather than
- * a single trigger point -- standard practice for a piezo-based
- * velocity-sensitive pad, and matching the doc's "hit/release/decay
- * phases" description of the original's per-pad state machine. Once a
- * hit is detected, velocity is derived from the same reading via the
- * original's confirmed scaling formula: ((value - 0x80) * 0x7F) / 0x220,
- * clamped to 1-127.
- *
- * Note/PC/CC number, and which of the three modes is active, now come
- * from the decoded per-program record (program.c/program.h) instead of
- * a standalone placeholder table -- see FIRMWARE_ANALYSIS.md's "Major
- * new finding" section, which found this exact three-mode structure by
- * reading FUN_08003ab8 in full.
- *
- * CONFIRMED (previously a placeholder): pad N reads `adc_raw[ADC_NUM_
- * CHANNELS + N]` -- AKAI's own schematic, read at higher resolution,
- * traces every individual wire from PAD1..PAD8 to ADC8..ADC15 in plain
- * sequential order (see adc.c's header for the full derivation).
- *
- * NOT YET CONFIRMED (same placeholder-honesty policy as knobs.c/keys.c):
- *  - The exact bit-width/scaling the original's thresholds and formula
- *    operate on (this reimplementation applies them directly to the raw
- *    12-bit adc_raw[] reading, as literally documented; the original
- *    may operate on a pre-scaled 8/10-bit derivative instead -- worth
- *    re-checking against real hardware captures).
- *  - What exactly happens on release in CC/PC mode. The original's
- *    Note-mode release (Note Off) is confirmed; for CC/PC this module
- *    approximates a reasonable behavior (CC value 0 on release, PC
- *    fires once on hit only) rather than the original's exact bytes,
- *    which weren't fully traced for those two branches.
- *  - Pad output mode is CONFIRMED not per-program stored data --
- *    a shared runtime variable, set by matrix column 8's buttons
- *    (buttons.c) -- see program.c's program_pad_mode() comment.
- */
+/* Stock-compatible piezo envelope, pad messages, toggles, and LED state. */
 #include "pads.h"
 #include "adc.h"
 #include "midi_ring.h"
-#include "stuck_note.h"
 #include "program.h"
 
-#define ATTACK_THRESHOLD 0x80
-#define RELEASE_THRESHOLD 0x41
-#define VELOCITY_SCALE_BASE 0x80
-#define VELOCITY_SCALE_DIV 0x220
+#define ATTACK_THRESHOLD 0x80u
+#define RELEASE_THRESHOLD 0x41u
+#define PEAK_LIMIT 0x2a0u
+#define ATTACK_SAMPLES 5u
+#define RELEASE_HOLD 30u
 
-static uint8_t pad_active[PADS_NUM];
+typedef struct {
+	uint8_t active;
+	uint8_t attack_count;
+	uint8_t release_count;
+	uint16_t peak;
+	uint8_t sent_mode;
+	uint8_t sent_bank;
+	uint8_t sent_number;
+	uint8_t sent_channel;
+} pad_envelope_t;
 
-void pads_init(void)
+static pad_envelope_t envelope[PADS_NUM];
+/* [Note/CC/PC][bank A/B][pad]. */
+static uint8_t output_active[3][2][PADS_NUM];
+static uint32_t last_generation;
+
+static void push_note(uint8_t channel, uint8_t note, uint8_t on, uint8_t velocity)
 {
-	for (int i = 0; i < PADS_NUM; i++) {
-		pad_active[i] = 0;
+	uint8_t e[4] = {on ? 0x09 : 0x08,
+	                (uint8_t)((on ? 0x90 : 0x80) | channel), note, velocity};
+	midi_ring_push(e, 4);
+}
+
+static void push_cc(uint8_t channel, uint8_t cc, uint8_t value)
+{
+	uint8_t e[4] = {0x0b, (uint8_t)(0xb0 | channel), cc, value};
+	midi_ring_push(e, 4);
+}
+
+static void push_pc(uint8_t channel, uint8_t pc)
+{
+	uint8_t e[4] = {0x0c, (uint8_t)(0xc0 | channel), pc, 0};
+	midi_ring_push(e, 4);
+}
+
+static void pad_hit(uint8_t pad, uint8_t velocity)
+{
+	pad_envelope_t *p = &envelope[pad];
+	uint8_t mode = program_pad_mode();
+	uint8_t bank = program_pad_bank();
+	uint8_t channel = program_pad_channel();
+	uint8_t toggle = program_pad_toggle(pad);
+	uint8_t *lit = &output_active[mode - 1][bank][pad];
+	p->sent_mode = mode;
+	p->sent_bank = bank;
+	p->sent_channel = channel;
+
+	if (mode == PAD_MODE_NOTE) {
+		p->sent_number = program_pad_note(pad);
+		if (toggle && *lit) {
+			push_note(channel, p->sent_number, 0, 127);
+			*lit = 0;
+		} else {
+			push_note(channel, p->sent_number, 1, velocity);
+			*lit = 1;
+		}
+	} else if (mode == PAD_MODE_CC) {
+		p->sent_number = program_pad_cc(pad);
+		if (toggle && *lit) {
+			push_cc(channel, p->sent_number, 0);
+			*lit = 0;
+		} else {
+			push_cc(channel, p->sent_number, velocity);
+			*lit = 1;
+		}
+	} else {
+		p->sent_number = program_pad_pc(pad);
+		push_pc(channel, p->sent_number);
+		*lit = 1;
 	}
 }
 
-static void send_pad_event(uint8_t pad, uint8_t on, uint8_t velocity)
+static void pad_release(uint8_t pad)
 {
-	uint8_t channel = program_channel();
-	uint8_t mode = program_pad_mode();
-	uint8_t event[4];
-
-	switch (mode) {
-	case PAD_MODE_CC: {
-		uint8_t cc = program_pad_cc(pad);
-		event[0] = 0x0B; /* Cable 0, CIN: Control Change */
-		event[1] = (uint8_t)(0xB0 | channel);
-		event[2] = cc;
-		event[3] = on ? velocity : 0;
-		midi_ring_push(event, 4);
-		break;
+	pad_envelope_t *p = &envelope[pad];
+	uint8_t *lit = &output_active[p->sent_mode - 1][p->sent_bank][pad];
+	if (p->sent_mode == PAD_MODE_PC) {
+		*lit = 0;
+		return;
 	}
-	case PAD_MODE_PC:
-		if (!on) {
-			return; /* fires once on hit, no release event */
-		}
-		event[0] = 0x0C; /* Cable 0, CIN: Program Change (2-byte message) */
-		event[1] = (uint8_t)(0xC0 | channel);
-		event[2] = program_pad_pc(pad);
-		event[3] = 0;
-		midi_ring_push(event, 4);
-		break;
-	case PAD_MODE_NOTE:
-	default: {
-		uint8_t note = program_pad_note(pad);
-		event[0] = on ? 0x09 : 0x08; /* Cable 0, CIN: Note On / Note Off */
-		event[1] = (uint8_t)((on ? 0x90 : 0x80) | channel);
-		event[2] = note;
-		event[3] = velocity;
-		midi_ring_push(event, 4);
+	if (program_pad_toggle(pad)) return;
+	if (p->sent_mode == PAD_MODE_NOTE) push_note(p->sent_channel, p->sent_number, 0, 127);
+	else push_cc(p->sent_channel, p->sent_number, 0);
+	*lit = 0;
+}
 
-		if (on) {
-			stuck_note_on(channel, note);
-		} else {
-			stuck_note_off(channel, note);
-		}
-		break;
+void pads_init(void)
+{
+	last_generation = adc_generation;
+	for (uint8_t p = 0; p < PADS_NUM; p++) {
+		envelope[p].active = 0;
+		envelope[p].attack_count = 0;
+		envelope[p].release_count = RELEASE_HOLD;
+		envelope[p].peak = 0;
+		for (uint8_t m = 0; m < 3; m++)
+			for (uint8_t b = 0; b < 2; b++) output_active[m][b][p] = 0;
 	}
-	}
-
-	/* TODO: ESP32-C3 mirror hook, same as keys.c's send_note(). */
 }
 
 void pads_process(void)
 {
-	for (int i = 0; i < PADS_NUM; i++) {
+	if (last_generation == adc_generation) return;
+	last_generation = adc_generation;
+	for (uint8_t i = 0; i < PADS_NUM; i++) {
+		pad_envelope_t *p = &envelope[i];
 		uint16_t value = adc_raw[ADC_NUM_CHANNELS + i];
-
-		if (!pad_active[i]) {
+		if (!p->active) {
 			if (value > ATTACK_THRESHOLD) {
-				int32_t scaled = ((int32_t)value - VELOCITY_SCALE_BASE) * 0x7F / VELOCITY_SCALE_DIV;
-				if (scaled < 1) {
-					scaled = 1;
+				if (p->attack_count == 0 || value > p->peak) p->peak = value;
+				if (++p->attack_count >= ATTACK_SAMPLES) {
+					if (p->peak > PEAK_LIMIT) p->peak = PEAK_LIMIT;
+					uint16_t scaled = (uint16_t)(((uint32_t)(p->peak - ATTACK_THRESHOLD) * 127u) / 0x220u);
+					uint8_t velocity = scaled == 0 ? 1 : (scaled > 127 ? 127 : (uint8_t)scaled);
+					p->active = 1;
+					p->release_count = RELEASE_HOLD;
+					pad_hit(i, velocity);
 				}
-				if (scaled > 127) {
-					scaled = 127;
-				}
-				pad_active[i] = 1;
-				send_pad_event((uint8_t)i, 1, (uint8_t)scaled);
+			} else {
+				p->attack_count = 0;
+				p->peak = 0;
+			}
+		} else if (value < RELEASE_THRESHOLD) {
+			if (p->release_count == 0) {
+				p->active = 0;
+				p->attack_count = 0;
+				p->peak = 0;
+				pad_release(i);
+			} else {
+				p->release_count--;
 			}
 		} else {
-			if (value < RELEASE_THRESHOLD) {
-				pad_active[i] = 0;
-				send_pad_event((uint8_t)i, 0, 0);
-			}
+			p->release_count = RELEASE_HOLD;
 		}
 	}
+}
+
+void pads_all_off(void)
+{
+	for (uint8_t pad = 0; pad < PADS_NUM; pad++) {
+		for (uint8_t bank = 0; bank < 2; bank++) {
+			if (output_active[PAD_MODE_NOTE - 1][bank][pad]) {
+				uint8_t old = program_pad_bank();
+				program_set_pad_bank(bank);
+				push_note(program_pad_channel(), program_pad_note(pad), 0, 127);
+				program_set_pad_bank(old);
+			}
+			if (output_active[PAD_MODE_CC - 1][bank][pad]) {
+				uint8_t old = program_pad_bank();
+				program_set_pad_bank(bank);
+				push_cc(program_pad_channel(), program_pad_cc(pad), 0);
+				program_set_pad_bank(old);
+			}
+			for (uint8_t mode = 0; mode < 3; mode++) output_active[mode][bank][pad] = 0;
+		}
+		envelope[pad].active = 0;
+		envelope[pad].attack_count = 0;
+	}
+}
+
+uint8_t pads_active_mask(void)
+{
+	uint8_t mask = 0;
+	uint8_t mode = program_pad_mode() - 1;
+	uint8_t bank = program_pad_bank();
+	for (uint8_t i = 0; i < PADS_NUM; i++) if (output_active[mode][bank][i]) mask |= (uint8_t)(1u << i);
+	return mask;
 }

@@ -8,13 +8,12 @@
  * to be a drop-in-compatible replacement (a class-compliant USB-MIDI
  * host driver identifies/binds the device by exactly this data). This
  * is protocol-conformance data, not original creative content --
- * comparable to reusing a connector pinout.
+ * comparable to reusing a connector pinout. The sole deliberate change is
+ * bMaxPower: the integrated ESP32-C3 version declares the USB 2.0 high-power
+ * maximum (500 mA) instead of stock's 100 mA.
  *
- * String descriptors: keeping "AKAI PROFESSIONAL,LP" / "MPK mini" here
- * would misrepresent a modified/replacement firmware as genuine AKAI
- * firmware. TODO before this is used for anything other than
- * bring-up/testing: change iManufacturer/iProduct strings to identify
- * this as the open-source replacement, not the original.
+ * The original strings are retained because exact USB identity is part
+ * of drop-in compatibility with existing editor and host software.
  */
 #include <stdint.h>
 
@@ -36,7 +35,7 @@ const uint8_t usb_device_descriptor[18] = {
  * wTotalLength = 101, matches original exactly. */
 const uint8_t usb_config_descriptor[101] = {
 	/* Configuration */
-	0x09, 0x02, 0x65, 0x00, 0x02, 0x01, 0x00, 0x80, 0x32,
+	0x09, 0x02, 0x65, 0x00, 0x02, 0x01, 0x00, 0x80, 0xFA,
 	/* Interface 0: Audio Control */
 	0x09, 0x04, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00,
 	/* CS_INTERFACE: AC Header, 1 streaming interface (#1) */
@@ -66,9 +65,6 @@ const uint8_t usb_config_descriptor[101] = {
 /* LANGID (US English) */
 const uint8_t usb_string_langid[4] = {0x04, 0x03, 0x09, 0x04};
 
-/* TODO: replace with a name identifying this as the open-source
- * replacement firmware before flashing to real hardware for anything
- * beyond bring-up testing (see file header). */
 const uint8_t usb_string_manufacturer[] = {
 	0x2A, 0x03,
 	'A',0,'K',0,'A',0,'I',0,' ',0,'P',0,'R',0,'O',0,'F',0,'E',0,

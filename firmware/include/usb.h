@@ -7,6 +7,10 @@
 void usb_init(void);
 void usb_poll(void);
 
+/* Nonzero when EP1 IN can accept a new packet immediately. Callers
+ * must not remove queued MIDI data until this reports ready. */
+int usb_midi_ready(void);
+
 /* Send one USB-MIDI packet (up to 64 bytes, already formatted as
  * 4-byte USB-MIDI events) out endpoint 0x81 IN. This is the low-level
  * transmit call -- see midi_ring.h for the buffer that feeds it, and

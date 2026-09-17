@@ -1,24 +1,16 @@
 /*
  * AD07 open-source replacement firmware -- main entry point.
  *
- * Status: a genuinely comprehensive reimplementation of the original's
- * confirmed feature set -- keys (velocity-sensed), pads (Note/CC/PC),
- * knobs, sustain pedal, real octave buttons + tap tempo (transport.c,
- * matrix column 7), a second button cluster of uncertain purpose
- * (buttons.c, matrix column 8), a 6-mode arpeggiator wired to key
- * input, a shared per-program record store, SysEx program management
- * (write/select/read/status), DFU/bootloader entry at power-on, and
- * the full MIDI TX pipeline -- all with documented placeholders only
- * where real hardware data is still needed (ADC pin-to-control
- * ordering) or the original's own behavior wasn't resolved with
- * confidence (see each module's header comment). See
- * FIRMWARE_ANALYSIS.md for what's confirmed vs. still unknown about
- * the original firmware's behavior in each of these areas.
+ * Implements the stock controller surface: velocity keys and pads,
+ * knobs, pad banks/modes, transport/modifier buttons, six-mode arp,
+ * persistent programs, editor SysEx, USB MIDI, and both LED registers.
+ * The original 8 KiB updater is retained ahead of this application.
  */
 #include "stm32f102.h"
 #include "systick.h"
 #include "matrix.h"
 #include "midi_ring.h"
+#include "midi_uart.h"
 #include "program.h"
 #include "sysex.h"
 #include "keys.h"
@@ -27,9 +19,9 @@
 #include "pads.h"
 #include "buttons.h"
 #include "transport.h"
-#include "stuck_note.h"
 #include "arp.h"
 #include "usb.h"
+#include "leds.h"
 
 static void clock_init(void)
 {
@@ -51,7 +43,9 @@ static void clock_init(void)
 	 * to the higher-speed PLL output. */
 	FLASH_IF->ACR = FLASH_ACR_LATENCY_2;
 
-	RCC->CFGR = (RCC->CFGR & ~(0x1Fu << 18)) | RCC_CFGR_PLLSRC_HSE |
+	RCC->CFGR = (RCC->CFGR & ~((0x1Fu << 18) | (0x7u << 8) | (0x7u << 11))) |
+	            (0x4u << 8) | (0x4u << 11) | /* APB1 /2, APB2 /2 */
+	            RCC_CFGR_PLLSRC_HSE |
 	            RCC_CFGR_PLLXTPRE_DIV1 | RCC_CFGR_PLLMUL6;
 
 	RCC->CR |= RCC_CR_PLLON;
@@ -65,9 +59,8 @@ static void clock_init(void)
 	/* USB clock: USBPRE bit (RCC_CFGR bit 22) = 0 selects PLL/1.5,
 	 * which for a 48 MHz PLL gives 32 MHz -- wrong. USB full-speed
 	 * needs exactly 48 MHz, so USBPRE must be 1 (PLL/1, no divide).
-	 * TODO: verify this bit's polarity against RM0008 directly
-	 * before relying on it -- documented from memory, not re-checked
-	 * against the reference manual this session. */
+	 * This setting is now hardware-validated by successful full-speed
+	 * enumeration, and the live CFGR matches the working original. */
 	RCC->CFGR |= (1u << 22);
 }
 
@@ -76,9 +69,13 @@ int main(void)
 	clock_init();
 	systick_init();
 	matrix_init();
+	leds_init();
 	midi_ring_init();
 	program_init();
+	if (program_factory_reset_performed()) leds_factory_reset_blink();
+	leds_boot_show();
 	sysex_init();
+	midi_uart_init();
 	usb_init();
 	adc_init();
 
@@ -87,23 +84,22 @@ int main(void)
 	pads_init();
 	buttons_init();
 	transport_init();
-	stuck_note_init();
 	arp_init();
 
 	while (1) {
+		adc_process();
 		matrix_scan();
 		keys_process();
 		pads_process();
-		/* Confirmed source: matrix column 8 -- see buttons.c's header. */
-		buttons_process(matrix_state[8]);
-		/* Confirmed source: matrix column 7 -- see transport.c's header. */
-		transport_process(matrix_state[7]);
+		buttons_process((uint8_t)~matrix_state[8]);
+		transport_process((uint8_t)~matrix_state[7]);
 		knobs_process();
-		stuck_note_process();
 		arp_process();
+		leds_process();
+		midi_uart_process();
 		usb_poll();
 
-		if (midi_ring_count() > 0) {
+		if (midi_ring_count() > 0 && usb_midi_ready()) {
 			uint8_t pkt[64];
 			size_t n = midi_ring_drain(pkt, sizeof pkt);
 			usb_midi_send(pkt, n);

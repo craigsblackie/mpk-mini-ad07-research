@@ -17,15 +17,11 @@
  *    if currently CC, back to Note; otherwise, to CC.
  *  - **Bit 3**: pressing it toggles pad mode between Program Change
  *    and Note, the same way.
- *  - **Bit 1**: sets a local flag (`mode_flag` below) and a separate
- *    byte to a reset sentinel (0xFF) -- purpose not reimplemented,
- *    tracked only.
- *  - **Bit 0**: the complement/idle case -- clears that same flag,
- *    same sentinel write. Not reimplemented beyond tracking the flag.
- *
- * Both the mode-flag byte this sets and the 0xFF-sentinel byte are
- * read elsewhere in the original by functions this project hasn't
- * traced -- genuinely open, not guessed at.
+ *  - **Bits 0/1** select pad bank A/B.  This is now cross-confirmed by
+ *    the LED builder: the exact byte written here is read by
+ *    FUN_08004c90 to choose status LED bit 0 or bit 1, while the pad
+ *    handler uses it as the second index in each pad's paired Note,
+ *    PC, and CC values.
  */
 #include "buttons.h"
 #include "program.h"
@@ -36,12 +32,11 @@
 #define BIT_PC_MODE (1u << 3)
 
 static uint8_t previous_status;
-static uint8_t mode_flag;
 
 void buttons_init(void)
 {
 	previous_status = 0;
-	mode_flag = 0;
+	program_set_pad_bank(0);
 }
 
 void buttons_process(uint8_t status_byte)
@@ -51,13 +46,13 @@ void buttons_process(uint8_t status_byte)
 
 	if (changed & BIT_ALT) {
 		if (status_byte & BIT_ALT) {
-			mode_flag = 1;
+			program_set_pad_bank(1);
 		}
 	}
 
 	if (changed & BIT_IDLE) {
 		if (status_byte & BIT_IDLE) {
-			mode_flag = 0;
+			program_set_pad_bank(0);
 		}
 	}
 

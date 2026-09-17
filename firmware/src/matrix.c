@@ -33,20 +33,25 @@ void matrix_init(void)
 {
 	RCC->APB2ENR |= RCC_APB2ENR_IOPBEN | RCC_APB2ENR_IOPCEN;
 
-	/* GPIOC[15:7]: general purpose push-pull output, 2 MHz.
-	 * TODO: this sets CRL/CRH per-pin config; not yet written out
-	 * bit-by-bit here -- placeholder until the exact original
-	 * GPIO speed/mode setup (confirmed separately in
-	 * FIRMWARE_ANALYSIS.md's AFIO/GPIO init functions) is
-	 * reimplemented. Functionally, columns need to be push-pull
-	 * outputs and rows need to be inputs (pull-up recommended so
-	 * an unconnected/open row reads high, matching the original's
-	 * active-low column / active-high-when-unpressed row logic). */
+	/* GPIOC[15:7]: general-purpose push-pull outputs at 2 MHz. Pin 7
+	 * occupies CRL's top nibble; pins 8-15 occupy all of CRH. This is
+	 * also the configuration used by the original firmware's GPIO
+	 * init (pin mask 0xff80, mode Out_PP, speed 2 MHz). */
+	GPIOC->CRL = (GPIOC->CRL & ~(0xFu << 28)) | (0x2u << 28);
+	GPIOC->CRH = 0x22222222u;
+
+	/* GPIOB[15:8]: inputs with pull-ups, matching the original's
+	 * GPIO_Mode_IPU setup for mask 0xff00. */
+	GPIOB->CRH = 0x88888888u;
+	GPIOB->ODR |= 0xFF00u;
 	GPIOC->ODR |= 0xFF80u; /* all columns idle high (deselected) */
 
 	for (int i = 0; i < MATRIX_COLS; i++) {
-		matrix_state[i] = 0;
-		pending_state[i] = 0;
+		/* Rows are active-low and pulled high. Start in the electrical
+		 * idle state so the first debounce pass cannot synthesize an
+		 * all-buttons-pressed transition. */
+		matrix_state[i] = 0xFFu;
+		pending_state[i] = 0xFFu;
 		stable_count[i] = 0;
 	}
 }
@@ -62,10 +67,14 @@ void matrix_scan(void)
 		uint8_t rows = (uint8_t)(GPIOB->IDR >> 8);
 
 		if (rows == pending_state[col]) {
-			if (stable_count[col] < 0xF0) {
-				stable_count[col]++;
+			uint8_t previous_count = stable_count[col];
+			if (previous_count < 0xF0) {
+				stable_count[col] = (uint8_t)(previous_count + 1);
 			}
-			if (stable_count[col] == 1) {
+			/* Stock commits key columns after two matching confirmation
+			 * scans, but waits for eight on the noisier panel buttons. */
+			if ((col < 7 && previous_count == 1) ||
+			    (col >= 7 && previous_count == 7)) {
 				matrix_state[col] = rows;
 			}
 		} else {
