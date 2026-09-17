@@ -61,6 +61,7 @@
 #include "arp.h"
 #include "pads.h"
 #include "transport.h"
+#include "velocity.h"
 
 #define KEY_NONE 0xFF
 #define KEY_COUNT 25
@@ -220,7 +221,13 @@ static void handle_bit(uint8_t key_index, int bit, uint8_t released)
 			if (delta > 126) {
 				delta = 126;
 			}
+			/* The original's linear inversion is the raw reading; the
+			 * curve then shapes it. VELOCITY_LINEAR is the default and
+			 * passes it through untouched, so stock feel is preserved
+			 * unless the player asks for something else. */
 			uint8_t velocity = (uint8_t)(127 - delta);
+			velocity = velocity_apply(program_key_curve(), velocity,
+			                          program_key_fixed_velocity());
 			key_state[key_index] = KEY_FIRED;
 			send_note(key_index, 1, velocity);
 		}

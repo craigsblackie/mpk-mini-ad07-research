@@ -1,6 +1,7 @@
 /* Original MPK mini mk1 101-byte program records and persistence. */
 #include "program.h"
 #include "stm32f102.h"
+#include "velocity.h"
 
 #define OFF_CHANNEL 0x00
 #define OFF_PAD_CHANNEL 0x01
@@ -29,11 +30,48 @@
 #define PERSIST_VALID_OFFSET (PERSIST_CURRENT_OFFSET + 1)
 #define PERSIST_SIZE (PERSIST_VALID_OFFSET + 2)
 
+/*
+ * Settings block, an addition with no stock counterpart (see program.h).
+ *
+ * The flash page at PERSIST_ADDRESS is 1 KiB on this medium-density
+ * part, and the stock-compatible image above occupies 407 bytes of it.
+ * 0x200 is the next round offset clear of that, leaving both areas room
+ * to grow. The magic distinguishes "written by this firmware" from an
+ * erased page (0xff) and from a page written by a build that predates
+ * the block; either falls back to SETTINGS_DEFAULT_*, which reproduce
+ * stock behaviour exactly.
+ */
+#define SETTINGS_OFFSET 0x200u
+#define SETTINGS_MAGIC_0 'M'
+#define SETTINGS_MAGIC_1 'P'
+#define SETTINGS_MAGIC_2 'K'
+#define SETTINGS_MAGIC_3 'S'
+#define SETTINGS_VERSION 1
+#define SETTINGS_BLOCK_SIZE 16u
+#define SETTINGS_OFF_VERSION 4
+#define SETTINGS_OFF_KEY_CURVE 5
+#define SETTINGS_OFF_PAD_CURVE 6
+#define SETTINGS_OFF_KEY_FIXED 7
+#define SETTINGS_OFF_PAD_FIXED 8
+#define PAGE_IMAGE_SIZE (SETTINGS_OFFSET + SETTINGS_BLOCK_SIZE)
+
+#define SETTINGS_DEFAULT_CURVE VELOCITY_LINEAR
+#define SETTINGS_DEFAULT_FIXED 100
+
 program_record_t programs[PROGRAM_COUNT];
 uint8_t current_program;
 static uint8_t pad_output_mode;
 static uint8_t pad_bank;
 static uint8_t factory_reset_performed;
+
+typedef struct {
+	uint8_t key_curve;
+	uint8_t pad_curve;
+	uint8_t key_fixed;
+	uint8_t pad_fixed;
+} settings_t;
+
+static settings_t settings;
 
 /* Four factory records read directly from the verified stock image. */
 static const uint8_t factory_programs[PERSIST_RECORDS][PROGRAM_RECORD_SIZE] = {
@@ -99,6 +137,40 @@ void program_reset_scratch(void)
 	}
 }
 
+static void settings_defaults(void)
+{
+	settings.key_curve = SETTINGS_DEFAULT_CURVE;
+	settings.pad_curve = SETTINGS_DEFAULT_CURVE;
+	settings.key_fixed = SETTINGS_DEFAULT_FIXED;
+	settings.pad_fixed = SETTINGS_DEFAULT_FIXED;
+}
+
+static void settings_validate(void)
+{
+	if (settings.key_curve >= VELOCITY_CURVE_COUNT) settings.key_curve = SETTINGS_DEFAULT_CURVE;
+	if (settings.pad_curve >= VELOCITY_CURVE_COUNT) settings.pad_curve = SETTINGS_DEFAULT_CURVE;
+	if (settings.key_fixed == 0 || settings.key_fixed > 127) settings.key_fixed = SETTINGS_DEFAULT_FIXED;
+	if (settings.pad_fixed == 0 || settings.pad_fixed > 127) settings.pad_fixed = SETTINGS_DEFAULT_FIXED;
+}
+
+/* An erased page, or one written before the block existed, reads as no
+ * magic -- fall back to defaults that reproduce stock behaviour. */
+static void settings_load(const volatile uint8_t *flash)
+{
+	const volatile uint8_t *b = &flash[SETTINGS_OFFSET];
+	if (b[0] != SETTINGS_MAGIC_0 || b[1] != SETTINGS_MAGIC_1 ||
+	    b[2] != SETTINGS_MAGIC_2 || b[3] != SETTINGS_MAGIC_3 ||
+	    b[SETTINGS_OFF_VERSION] != SETTINGS_VERSION) {
+		settings_defaults();
+		return;
+	}
+	settings.key_curve = b[SETTINGS_OFF_KEY_CURVE];
+	settings.pad_curve = b[SETTINGS_OFF_PAD_CURVE];
+	settings.key_fixed = b[SETTINGS_OFF_KEY_FIXED];
+	settings.pad_fixed = b[SETTINGS_OFF_PAD_FIXED];
+	settings_validate();
+}
+
 void program_init(void)
 {
 	pad_output_mode = PAD_MODE_NOTE;
@@ -107,6 +179,7 @@ void program_init(void)
 	clear_bytes(programs[0].raw, PROGRAM_RECORD_SIZE);
 	validate(0);
 	const volatile uint8_t *flash = (const volatile uint8_t *)PERSIST_ADDRESS;
+	settings_load(flash);
 	if (flash[PERSIST_VALID_OFFSET] == 1) {
 		for (uint8_t i = 0; i < PERSIST_RECORDS; i++)
 			for (uint8_t j = 0; j < PROGRAM_RECORD_SIZE; j++)
@@ -129,12 +202,35 @@ void program_select(uint8_t index) { if (index < PROGRAM_COUNT) current_program 
 
 void program_persist(void)
 {
-	uint8_t image[PERSIST_SIZE];
+	/* One erase covers the whole page, so both areas are rebuilt and
+	 * rewritten together -- saving a program must not drop the settings
+	 * block, and saving settings must not drop the programs. Everything
+	 * between the two areas is left at the erased value, which is what
+	 * stock's shorter write leaves there. */
+	uint8_t image[PAGE_IMAGE_SIZE];
+	for (uint16_t i = 0; i < PAGE_IMAGE_SIZE; i++) image[i] = 0xff;
 	for (uint8_t i = 0; i < PERSIST_RECORDS; i++)
 		copy_bytes(&image[i * PROGRAM_RECORD_SIZE], programs[i + 1].raw, PROGRAM_RECORD_SIZE);
 	image[PERSIST_CURRENT_OFFSET] = current_program;
 	image[PERSIST_VALID_OFFSET] = 1;
+	/* Byte 0x196 is 0xff in stock's image (left at the prefill), and
+	 * stock's halfword writer sources one zero padding byte past the
+	 * 407-byte image, so 0x197 lands as 0x00. Reproduced exactly so the
+	 * first 408 bytes of this page stay byte-identical to stock's. */
 	image[PERSIST_VALID_OFFSET + 1] = 0xff;
+	image[PERSIST_SIZE] = 0x00;
+
+	settings_validate();
+	uint8_t *b = &image[SETTINGS_OFFSET];
+	b[0] = SETTINGS_MAGIC_0;
+	b[1] = SETTINGS_MAGIC_1;
+	b[2] = SETTINGS_MAGIC_2;
+	b[3] = SETTINGS_MAGIC_3;
+	b[SETTINGS_OFF_VERSION] = SETTINGS_VERSION;
+	b[SETTINGS_OFF_KEY_CURVE] = settings.key_curve;
+	b[SETTINGS_OFF_PAD_CURVE] = settings.pad_curve;
+	b[SETTINGS_OFF_KEY_FIXED] = settings.key_fixed;
+	b[SETTINGS_OFF_PAD_FIXED] = settings.pad_fixed;
 	uint32_t primask;
 	__asm volatile ("mrs %0, primask\n cpsid i" : "=r"(primask) :: "memory");
 	if (FLASH_IF->CR & FLASH_CR_LOCK) {
@@ -150,11 +246,8 @@ void program_persist(void)
 	FLASH_IF->CR &= ~FLASH_CR_PER;
 	FLASH_IF->CR |= FLASH_CR_PG;
 	volatile uint16_t *dst = (volatile uint16_t *)PERSIST_ADDRESS;
-	for (uint16_t i = 0; i < (PERSIST_SIZE + 1) / 2; i++) {
-		uint16_t value = image[i * 2];
-		if (i * 2 + 1 < PERSIST_SIZE) value |= (uint16_t)image[i * 2 + 1] << 8;
-		/* Stock's word writer sources one zero padding byte after the
-		 * 407-byte image, so offset 0x197 is programmed as 0x00. */
+	for (uint16_t i = 0; i < PAGE_IMAGE_SIZE / 2; i++) {
+		uint16_t value = (uint16_t)image[i * 2] | ((uint16_t)image[i * 2 + 1] << 8);
 		dst[i] = value;
 		while (FLASH_IF->SR & FLASH_SR_BSY) {}
 	}
@@ -210,4 +303,26 @@ void program_load_from_wire(uint8_t n, const uint8_t wire[PROGRAM_RECORD_SIZE]) 
 void program_save_to_wire(uint8_t n, uint8_t wire[PROGRAM_RECORD_SIZE]) {
 	if (n >= PROGRAM_COUNT) return;
 	for (uint8_t r = 0; r < PROGRAM_RECORD_SIZE; r++) wire[RECORD_TO_WIRE[r]] = programs[n].raw[r];
+}
+
+uint8_t program_key_curve(void) { return settings.key_curve; }
+uint8_t program_pad_curve(void) { return settings.pad_curve; }
+uint8_t program_key_fixed_velocity(void) { return settings.key_fixed; }
+uint8_t program_pad_fixed_velocity(void) { return settings.pad_fixed; }
+
+void program_settings_to_wire(uint8_t wire[SETTINGS_PAYLOAD_SIZE])
+{
+	wire[0] = settings.key_curve;
+	wire[1] = settings.pad_curve;
+	wire[2] = settings.key_fixed;
+	wire[3] = settings.pad_fixed;
+}
+
+void program_settings_from_wire(const uint8_t wire[SETTINGS_PAYLOAD_SIZE])
+{
+	settings.key_curve = wire[0];
+	settings.pad_curve = wire[1];
+	settings.key_fixed = wire[2];
+	settings.pad_fixed = wire[3];
+	settings_validate();
 }

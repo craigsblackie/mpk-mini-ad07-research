@@ -140,4 +140,33 @@ void program_set_pad_bank(uint8_t bank);
 void program_load_from_wire(uint8_t program_index, const uint8_t wire[PROGRAM_RECORD_SIZE]);
 void program_save_to_wire(uint8_t program_index, uint8_t wire[PROGRAM_RECORD_SIZE]);
 
+/*
+ * Global settings block -- an addition, with no counterpart in the
+ * original firmware.
+ *
+ * These are NOT in the 101-byte record: every byte of that record is
+ * already spoken for by the original's layout, and it is what the stock
+ * editor reads and writes, so anything stored there would be clobbered
+ * by a stock-editor program write. The block lives at its own offset in
+ * the same flash page as the program store, past the 407 bytes the
+ * stock-compatible image occupies, behind a magic and a version so an
+ * older device (or a fresh page) reads as "no settings" and falls back
+ * to values that reproduce stock behaviour exactly.
+ *
+ * program_persist() erases the whole page, so it writes both areas in
+ * one pass -- settings survive a program save and vice versa.
+ */
+#define SETTINGS_PAYLOAD_SIZE 4
+
+uint8_t program_key_curve(void);
+uint8_t program_pad_curve(void);
+uint8_t program_key_fixed_velocity(void);
+uint8_t program_pad_fixed_velocity(void);
+
+/* Pack/unpack the 7-bit-safe SysEx payload. Out-of-range values are
+ * clamped rather than rejected, so a partially understood payload from a
+ * newer editor still leaves the device in a usable state. */
+void program_settings_to_wire(uint8_t wire[SETTINGS_PAYLOAD_SIZE]);
+void program_settings_from_wire(const uint8_t wire[SETTINGS_PAYLOAD_SIZE]);
+
 #endif /* PROGRAM_H */

@@ -31,6 +31,18 @@ and retains the unit's original 8 KiB updater at `0x08000000`.
 - Five 101-byte program records (scratch plus four persistent programs), the
   stock flash-page layout, validation rules, defaults, and current-program
   marker.
+
+Beyond stock:
+
+- Selectable velocity response curves, separately for the keys and the pads:
+  Linear, Soft, Medium soft, Hard, Very hard, and Fixed. `Linear` is the
+  default and is bit-identical to stock, so a device that has never been given
+  a curve behaves exactly as before. They are stored in their own block in the
+  program flash page, not in the 101-byte record -- every byte of that record
+  is already allocated by the original layout, and a stock-editor program
+  write would clobber anything hidden there. Read and written over SysEx with
+  the added `'v'` command; `'v'` is unused by stock, so it cannot shadow a
+  real command.
 - Editor SysEx write/select/read/status/bootstrap and universal identity
   requests. Dumps for programs 0-4, bootstrap side effects, status, and the
   identity response have been compared byte-for-byte with the backed-up
@@ -53,6 +65,17 @@ maps.
 ```bash
 make
 ```
+
+Host-side tests for the parts that are pure logic:
+
+```bash
+cd test && make check
+```
+
+This checks every velocity curve is monotonic, stays inside 1..127, anchors at
+127, and never mutes a note; that `Linear` passes all 127 inputs through
+untouched; and that the settings block still fits the flash page it shares with
+the program store.
 
 This requires `arm-none-eabi-gcc`. The outputs are:
 

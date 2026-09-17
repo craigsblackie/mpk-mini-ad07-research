@@ -156,6 +156,41 @@ static void send_status(void)
 	pack_and_send(msg, 9);
 }
 
+/*
+ * 'v' -- global settings (velocity curves). An addition: the original
+ * firmware has no such command. Framed like every stock command, with
+ * byte 7 (the program# slot) reused as a sub-command, since these
+ * settings are global and have no program to address:
+ *
+ *   read   F0 47 <id> 7C 'v' 00 01 00 F7
+ *   reply  F0 47 <id> 7C 'v' 00 05 00 <4 payload bytes> F7
+ *   write  F0 47 <id> 7C 'v' 00 05 01 <4 payload bytes> F7
+ *
+ * As with the stock commands, the length field counts byte 7 plus the
+ * payload. 'v' was chosen because stock uses only 'a', 'b', 'c', 'd',
+ * 'j' and '`' -- see FIRMWARE_ANALYSIS.md's command table -- so a stock
+ * editor will never emit it and this cannot shadow a real command.
+ */
+#define SETTINGS_SUBCMD_READ 0
+#define SETTINGS_SUBCMD_WRITE 1
+#define SETTINGS_MSG_LEN (HEADER_LEN + SETTINGS_PAYLOAD_SIZE + 1)
+
+static void send_settings(void)
+{
+	uint8_t msg[SETTINGS_MSG_LEN];
+	msg[0] = 0xF0;
+	msg[1] = 0x47;
+	msg[2] = last_id;
+	msg[3] = 0x7C;
+	msg[4] = 'v';
+	msg[5] = 0x00;
+	msg[6] = SETTINGS_PAYLOAD_SIZE + 1;
+	msg[7] = SETTINGS_SUBCMD_READ;
+	program_settings_to_wire(&msg[HEADER_LEN]);
+	msg[SETTINGS_MSG_LEN - 1] = 0xF7;
+	pack_and_send(msg, SETTINGS_MSG_LEN);
+}
+
 static void sysex_process(void)
 {
 	/* The universal identity request is only six bytes, shorter than an
@@ -187,6 +222,21 @@ static void sysex_process(void)
 		program_reset_scratch();
 		program_select(0);
 		send_bootstrap();
+		return;
+	}
+
+	if (cmd == 'v') {
+		/* Byte 7 is a sub-command here, not a program index, so this
+		 * must be handled before the program-range guard below. */
+		if (sysex_buf[7] == SETTINGS_SUBCMD_READ) {
+			send_settings();
+		} else if (sysex_buf[7] == SETTINGS_SUBCMD_WRITE &&
+		           sysex_len == SETTINGS_MSG_LEN && sysex_buf[5] == 0 &&
+		           sysex_buf[6] == SETTINGS_PAYLOAD_SIZE + 1) {
+			program_settings_from_wire(&sysex_buf[HEADER_LEN]);
+			program_persist();
+			send_settings(); /* echo back what was actually stored */
+		}
 		return;
 	}
 

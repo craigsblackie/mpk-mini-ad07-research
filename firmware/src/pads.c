@@ -3,6 +3,7 @@
 #include "adc.h"
 #include "midi_ring.h"
 #include "program.h"
+#include "velocity.h"
 
 #define ATTACK_THRESHOLD 0x80u
 #define RELEASE_THRESHOLD 0x41u
@@ -123,6 +124,11 @@ void pads_process(void)
 					if (p->peak > PEAK_LIMIT) p->peak = PEAK_LIMIT;
 					uint16_t scaled = (uint16_t)(((uint32_t)(p->peak - ATTACK_THRESHOLD) * 127u) / 0x220u);
 					uint8_t velocity = scaled == 0 ? 1 : (scaled > 127 ? 127 : (uint8_t)scaled);
+					/* Pads get their own curve: a piezo's response is
+					 * nothing like a key's two-contact timing, so one
+					 * setting for both would suit neither. */
+					velocity = velocity_apply(program_pad_curve(), velocity,
+					                          program_pad_fixed_velocity());
 					p->active = 1;
 					p->release_count = RELEASE_HOLD;
 					pad_hit(i, velocity);
