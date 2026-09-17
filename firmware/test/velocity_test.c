@@ -102,16 +102,48 @@ int main(void)
 		ok("response decreases monotonically", mono, "slower press, lower velocity");
 		ok("interval output stays in 1..127", ranged, "0..200 ms swept");
 
-		/* The whole point: an ordinary press must land mid-scale, not at
-		 * the floor the way the loop-counter version did. */
-		uint8_t mid = velocity_from_interval((FAST + SLOW) / 2, FAST, SLOW);
-		sprintf(buf, "%u ms -> velocity %u", (FAST + SLOW) / 2, mid);
-		ok("mid-speed press lands mid-scale", mid > 50 && mid < 80, buf);
+		/* The response is logarithmic in time, so the interval that lands
+		 * mid-scale is the geometric mean of the window, not the
+		 * arithmetic one. sqrt(4*60) = 15 ms. */
+		uint32_t geo = 15;
+		uint8_t mid = velocity_from_interval(geo, FAST, SLOW);
+		sprintf(buf, "%u ms -> velocity %u", (unsigned)geo, mid);
+		ok("geometric mid lands mid-scale", mid > 50 && mid < 80, buf);
 
-		int spread = 0;
-		for (uint32_t d = FAST; d <= SLOW; d += 5)
-			if (velocity_from_interval(d, FAST, SLOW) > 100) spread++;
-		ok("upper range is reachable", spread >= 2, "several intervals exceed 100");
+		/* The defining property: every halving of the contact interval is
+		 * worth about the same step in velocity. That is what lets one
+		 * window serve a 64:1 range of strike speeds. */
+		uint8_t v8  = velocity_from_interval(8,  2, 128);
+		uint8_t v16 = velocity_from_interval(16, 2, 128);
+		uint8_t v32 = velocity_from_interval(32, 2, 128);
+		int step1 = v8 - v16, step2 = v16 - v32;
+		int diff = step1 > step2 ? step1 - step2 : step2 - step1;
+		sprintf(buf, "8->16 ms: %d, 16->32 ms: %d", step1, step2);
+		ok("equal octaves give equal steps", diff <= 3 && step1 > 10, buf);
+
+		/* The bug this replaced: soft presses must stay audible rather
+		 * than all collapsing onto the floor. */
+		int distinct = 0;
+		uint8_t seen = 0;
+		for (uint32_t d = 20; d <= 100; d += 10) {
+			uint8_t v = velocity_from_interval(d, 2, 127);
+			if (v != seen && v > 1) { distinct++; seen = v; }
+		}
+		sprintf(buf, "%d distinct values from 20-100 ms", distinct);
+		ok("soft presses stay expressive", distinct >= 7, buf);
+
+		/* Under a logarithmic response the loudest velocities live in a
+		 * narrow band of time near fast_ms, so what matters is that the
+		 * top is reachable at all and that the window spans the scale --
+		 * not how many evenly-spaced samples sit up there. */
+		uint8_t lo = 127, hi = 1;
+		for (uint32_t d = FAST; d <= SLOW; d++) {
+			uint8_t v = velocity_from_interval(d, FAST, SLOW);
+			if (v < lo) lo = v;
+			if (v > hi) hi = v;
+		}
+		sprintf(buf, "window spans velocity %u..%u", lo, hi);
+		ok("window spans the usable scale", hi >= 120 && lo <= 5, buf);
 
 		ok("degenerate window does no harm",
 		   velocity_from_interval(20, 60, 4) == 127, "inverted window clamps high");

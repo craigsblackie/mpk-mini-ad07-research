@@ -50,7 +50,7 @@ static const char *TAG = "editor";
 #define RECORD_SIZE   101
 #define HEADER_LEN    8
 #define PROGRAM_MSG   110             /* header + 101 payload + F7 */
-#define SETTINGS_LEN  4
+#define SETTINGS_LEN  6
 #define SYSEX_TIMEOUT 800
 
 /* Mirrors firmware/src/program.c's RECORD_TO_WIRE. */
@@ -376,10 +376,11 @@ static esp_err_t settings_get(httpd_req_t *req)
 	uint8_t s[SETTINGS_LEN];
 	if (!fetch_settings(s))
 		return send_error(req, "504 Gateway Timeout", "keyboard did not answer");
-	char body[160];
+	char body[224];
 	snprintf(body, sizeof(body),
-	         "{\"keyCurve\":%u,\"padCurve\":%u,\"keyFixed\":%u,\"padFixed\":%u}",
-	         s[0], s[1], s[2], s[3]);
+	         "{\"keyCurve\":%u,\"padCurve\":%u,\"keyFixed\":%u,\"padFixed\":%u,"
+	         "\"keyFastMs\":%u,\"keySlowMs\":%u}",
+	         s[0], s[1], s[2], s[3], s[4], s[5]);
 	return send_json(req, body);
 }
 
@@ -396,7 +397,9 @@ static esp_err_t settings_post(httpd_req_t *req)
 	if (!fetch_settings(s))
 		return send_error(req, "504 Gateway Timeout", "keyboard did not answer");
 
-	static const char *keys[SETTINGS_LEN] = {"keyCurve", "padCurve", "keyFixed", "padFixed"};
+	static const char *keys[SETTINGS_LEN] = {
+		"keyCurve", "padCurve", "keyFixed", "padFixed", "keyFastMs", "keySlowMs"
+	};
 	for (int i = 0; i < SETTINGS_LEN; i++) {
 		unsigned v;
 		if (json_uint(body, keys[i], &v)) s[i] = (uint8_t)(v & 0x7fu);
@@ -406,6 +409,25 @@ static esp_err_t settings_post(httpd_req_t *req)
 	return settings_get(req);
 }
 
+/* Calibration telemetry: the shortest, longest and most recent contact
+ * intervals the keybed has produced since boot. What the velocity window
+ * should be set from. */
+static esp_err_t velstats_get(httpd_req_t *req)
+{
+	const uint8_t request[9] = {0xf0, 0x47, 0x00, 0x7c, 'v', 0x00, 0x01, 0x02, 0xf7};
+	uint8_t reply[SYSEX_BRIDGE_MAX];
+	size_t len = sysex_bridge_request(request, sizeof(request), 'v',
+	                                  reply, sizeof(reply), SYSEX_TIMEOUT);
+	if (len != HEADER_LEN + 4 + 1)
+		return send_error(req, "504 Gateway Timeout", "keyboard did not answer");
+	char body[160];
+	snprintf(body, sizeof(body),
+	         "{\"fastestMs\":%u,\"slowestMs\":%u,\"lastMs\":%u,\"strikes\":%u}",
+	         reply[HEADER_LEN], reply[HEADER_LEN + 1],
+	         reply[HEADER_LEN + 2], reply[HEADER_LEN + 3]);
+	return send_json(req, body);
+}
+
 /* ---------- lifecycle ---------- */
 
 static const httpd_uri_t routes[] = {
@@ -413,6 +435,7 @@ static const httpd_uri_t routes[] = {
 	{.uri = "/api/status",    .method = HTTP_GET,  .handler = status_get},
 	{.uri = "/api/settings",  .method = HTTP_GET,  .handler = settings_get},
 	{.uri = "/api/settings",  .method = HTTP_POST, .handler = settings_post},
+	{.uri = "/api/velstats",  .method = HTTP_GET,  .handler = velstats_get},
 	{.uri = "/api/program/*", .method = HTTP_GET,  .handler = program_get},
 	{.uri = "/api/program/*", .method = HTTP_POST, .handler = program_post},
 };
@@ -452,7 +475,7 @@ static void portal_start(void)
 
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 	config.uri_match_fn = httpd_uri_match_wildcard;
-	config.max_uri_handlers = 8;
+	config.max_uri_handlers = 10;
 	config.stack_size = 5120;
 	config.lru_purge_enable = true;
 	if (httpd_start(&server, &config) != ESP_OK) {

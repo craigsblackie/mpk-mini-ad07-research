@@ -156,7 +156,14 @@
           <select id="padCurve" data-curve></select></label>
         <label class="f"><span>Pad fixed value</span>
           <input id="padFixed" type="number" min="1" max="127" data-curve></label>
+        <label class="f"><span>Hard strike (ms)</span>
+          <input id="keyFastMs" type="number" min="1" max="127"></label>
+        <label class="f"><span>Softest press (ms)</span>
+          <input id="keySlowMs" type="number" min="2" max="127"></label>
         <button id="saveCurves" type="button">Save curves</button>
+        <button id="measure" type="button">Measure my keybed</button>
+        <p class="hint" id="velstats" style="max-width:220px">Play for a minute, then
+          measure: the shortest and longest contact intervals become the window.</p>
       </div>
       <div>
         <canvas id="graph" width="300" height="300" aria-label="Velocity response graph"></canvas>
@@ -369,6 +376,8 @@
       el("padCurve").value = s.padCurve;
       el("keyFixed").value = s.keyFixed;
       el("padFixed").value = s.padFixed;
+      if (s.keyFastMs !== undefined) el("keyFastMs").value = s.keyFastMs;
+      if (s.keySlowMs !== undefined) el("keySlowMs").value = s.keySlowMs;
       drawGraph();
     }).catch(function (e) { say("Could not read velocity curves: " + e.message, "err"); });
   }
@@ -382,7 +391,9 @@
         keyCurve: parseInt(el("keyCurve").value, 10),
         padCurve: parseInt(el("padCurve").value, 10),
         keyFixed: clampField("keyFixed", 100),
-        padFixed: clampField("padFixed", 100)
+        padFixed: clampField("padFixed", 100),
+        keyFastMs: clampField("keyFastMs", 2),
+        keySlowMs: clampField("keySlowMs", 127)
       })
     }).then(function (s) {
       settings = s;
@@ -405,6 +416,20 @@
   el("reload").addEventListener("click", loadProgram);
   el("save").addEventListener("click", saveProgram);
   el("saveCurves").addEventListener("click", saveSettings);
+  el("measure").addEventListener("click", function () {
+    request("/api/velstats").then(function (v) {
+      if (!v.strikes) {
+        say("No keys struck yet — play for a minute, then measure again.", "err");
+        return;
+      }
+      el("keyFastMs").value = Math.max(1, v.fastestMs);
+      el("keySlowMs").value = Math.max(v.fastestMs + 1, v.slowestMs);
+      el("velstats").textContent =
+        "Measured " + v.strikes + " strikes: fastest " + v.fastestMs +
+        " ms, slowest " + v.slowestMs + " ms. Save to apply.";
+      drawGraph();
+    }).catch(function (e) { say("Could not measure: " + e.message, "err"); });
+  });
   el("prog").addEventListener("change", loadProgram);
   document.querySelectorAll("[data-curve]").forEach(function (node) {
     node.addEventListener("input", drawGraph);

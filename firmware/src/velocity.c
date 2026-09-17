@@ -71,13 +71,38 @@ uint8_t velocity_apply(uint8_t curve, uint8_t velocity, uint8_t fixed)
 	}
 }
 
+/* log2(x) in Q8 fixed point. The mantissa is interpolated linearly, which
+ * costs up to 0.086 of an octave -- inaudible as a velocity difference, and
+ * it keeps this integer-only. */
+static uint32_t log2_q8(uint32_t x)
+{
+	if (x == 0) return 0;
+	uint32_t n = 31u - (uint32_t)__builtin_clz(x);
+	uint32_t mantissa = n >= 8u ? (x >> (n - 8u)) : (x << (8u - n));
+	return (n << 8) + (mantissa - 256u);
+}
+
+/*
+ * Logarithmic, not linear, in contact time.
+ *
+ * A keybed spans roughly 2 ms for a hard strike to 130 ms for the gentlest
+ * press -- a 64:1 ratio. Spreading velocity linearly across that cannot
+ * serve both ends: scaled for hard playing it collapses every soft press
+ * onto 1, and scaled for soft playing it reports almost everything as
+ * loud. Perceived dynamics go with the logarithm of strike speed anyway,
+ * so each halving of the interval is worth a fixed step in velocity.
+ */
 uint8_t velocity_from_interval(uint32_t delta_ms, uint8_t fast_ms, uint8_t slow_ms)
 {
 	if (slow_ms <= fast_ms) return 127; /* nonsensical window -- do no harm */
 	if (delta_ms <= fast_ms) return 127;
 	if (delta_ms >= slow_ms) return 1;
 
-	uint32_t span = (uint32_t)slow_ms - fast_ms;
-	uint32_t into = delta_ms - fast_ms;
-	return (uint8_t)(127u - (into * 126u) / span);
+	uint32_t base = log2_q8(fast_ms);
+	uint32_t span = log2_q8(slow_ms) - base;
+	if (span == 0) return 127;
+
+	uint32_t drop = ((log2_q8(delta_ms) - base) * 126u) / span;
+	if (drop > 126u) drop = 126u;
+	return (uint8_t)(127u - drop);
 }
