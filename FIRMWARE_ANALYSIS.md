@@ -485,10 +485,20 @@ actually receive and apply real program dumps from AKAI's editor
 software (see `program.c`'s SysEx receive support) even without knowing
 every field's meaning — unrecognized bytes just round-trip unchanged.
 
-## Revised: octave/program buttons + device-initiated SysEx — `FUN_080044fc` (medium-high confidence)
+## Revised: column-8 buttons + device-initiated SysEx — `FUN_080044fc` (medium-high confidence)
 
 Full trace revises the earlier "sustain pedal?" guess — this doesn't match
 that pattern at all on closer reading.
+
+**Later correction (see "Major correction: column 7 is a second button
+cluster" further down this document)**: this section's "octave
+up/down" interpretation for this function's bits 2/3 is superseded —
+column 7's `FUN_08006988`, traced in a later pass, has a much cleaner
+increment/decrement/reset-to-default mechanism directly confirmed
+against the real note-computation formula, and the actual sustain
+pedal turned out to be on column 7 too (CC 64, unambiguous). This
+function's real purpose is open again; left below as originally
+written for the record.
 
 - Reads a status byte, edge-detects against the previous value (standard
   pattern throughout this firmware).
@@ -1109,3 +1119,59 @@ isn't high enough resolution to read reliably pin-by-pin. Misreading
 that risks a confidently-wrong mapping, which is worse than leaving it
 an honest placeholder (numeric order, pad N = channel 8+N) — consistent
 with this project's standing policy throughout.
+
+## Major correction: column 7 is a second button cluster — sustain, real octave buttons, tap tempo
+
+`FUN_08006988` was previously characterized only as "tap-tempo
+candidate, lowest confidence" from a partial read. Reading it in full
+(live Ghidra) resolves it completely, and in the process corrects an
+earlier interpretation elsewhere in this document.
+
+**Input source, confirmed via `get_xrefs_to`**: this function reads
+SRAM `0x20000012`, which the matrix scanner (`FUN_080048f4`) writes for
+**column 7** — the *other* "extra" column, distinct from column 8
+(`0x20000011`, `FUN_080044fc`, this document's octave-buttons section
+above). Two genuinely separate button clusters exist on this hardware,
+one per extra column.
+
+**Column 7's bits, resolved**:
+
+- **Bit 2 (`0x04`)**: tracked by level, sends Control Change 64 (the
+  standard MIDI sustain-pedal CC) — 127 while held, 0 on release.
+  Unambiguous: this is a **sustain pedal / hold button**.
+- **Bits 4 and 5 (`0x10`, `0x20`)**: directly increment/decrement
+  `record+0x02` (clamped 0-8), with both held together (`0x30`)
+  resetting it to 4 (the confirmed factory default). Cross-referencing
+  `record+0x02`'s only other use in the codebase — `FUN_08004990` (the
+  key edge detector)'s own note formula, `note = key_index +
+  record[2]*12 + record[3]` — resolves both fields at once:
+  **`record+0x02` is the keyboard's octave, `record+0x03` its fine
+  transpose**, and **these column-7 buttons are the real octave
+  up/down control**, with a hold-both-to-reset gesture.
+- **Bit 1 (`0x02`)**: a genuine **tap-tempo** implementation — logs the
+  interval since the previous tap into a small ring buffer, and once
+  enough taps have accumulated (`record+0x09`, confirmed factory
+  default 3 — plausibly the required tap count, though this project
+  didn't independently verify that specific role), averages them into
+  a tempo value clamped to 250-2000ms per interval.
+- **Bits 0 and 3 (`0x01`, `0x08`)**: interact with the arp-hold array
+  reset logic seen elsewhere in this document, but weren't resolved
+  with enough confidence to characterize further this pass.
+
+**This corrects this document's earlier octave-buttons section**
+(and `firmware/buttons.c`'s implementation built on it): the
+"toggle-between-two-values" mechanism on **column 8** was this
+project's original guess at "the octave buttons," made before column
+7 was traced. Column 7's increment/decrement/reset-to-default
+mechanism is a far cleaner match for a real octave control than
+column 8's toggle pattern ever was, and is now independently
+cross-confirmed against the actual note-computation formula. Column
+8's real purpose is reopened — see `buttons.c`'s updated header.
+
+**Implemented in `firmware/`**: `program.c` gained `program_octave()`/
+`program_fine_transpose()`/`program_set_octave()` (record+0x02/0x03),
+`keys.c`'s note formula now uses them directly (replacing an earlier
+self-invented placeholder formula), `transport.c` implements column
+7's sustain pedal, octave buttons, and tap-tempo trigger, and
+`arp.c` gained `arp_tap()` (a simplified single-interval tap tempo,
+not the original's N-tap rolling average, but the same real feature).

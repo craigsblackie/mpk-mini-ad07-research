@@ -24,14 +24,18 @@ land.
   3-state per-key machine (idle/armed/fired) driven by the row-bit pair
   sharing each key index, with velocity computed as `127 -
   clamp(delta, 0, 126)` (confirmed a plain linear inversion, not a
-  curve). **This is the intended mirror tap point for the ESP32-C3 BLE
-  MIDI project** — see the TODO comment in `send_note()`. One caveat:
-  the delta is clocked against a free-running counter incremented once
-  per `keys_process()` call, matching the original's own timing
-  *category* (confirmed to be a call-rate counter, not the SysTick
-  hardware — see `keys.c`'s header) but not independently calibrated to
-  real time, since this firmware's main-loop rate isn't guaranteed to
-  match the original's.
+  curve). Note pitch now uses the original's own confirmed formula,
+  `key_index + program_octave()*12 + program_fine_transpose()`
+  (`record+0x02`/`0x03`), replacing an earlier self-invented
+  placeholder — see `program.c` and `transport.c`. **This is the
+  intended mirror tap point for the ESP32-C3 BLE MIDI project** — see
+  the TODO comment in `send_note()`. One caveat: the velocity delta is
+  clocked against a free-running counter incremented once per
+  `keys_process()` call, matching the original's own timing *category*
+  (confirmed to be a call-rate counter, not the SysTick hardware — see
+  `keys.c`'s header) but not independently calibrated to real time,
+  since this firmware's main-loop rate isn't guaranteed to match the
+  original's.
 - **USB descriptors** (`src/usb_descriptors.c`): byte-verified against the
   real device, needed for class-compliant enumeration.
 - **USB device stack** (`src/usb.c`): minimal STM32F1 USB peripheral
@@ -95,11 +99,20 @@ land.
   three confirmed pad output modes (Note/CC/Program Change), not just
   Note. Same caveat as knobs: which physical pad is which specific
   channel within 8-15 isn't confirmed.
-- **Octave up/down buttons** (`src/buttons.c`): reimplements the
-  toggle-between-two-states pattern found in the original's button
-  handler as an octave up/down offset (±4), applied to `keys.c`'s note
-  output. Input source is now **confirmed** — matrix column 8 (see
-  `buttons.c`'s header for how this was traced).
+- **Matrix column 7: sustain pedal, real octave buttons, tap tempo**
+  (`src/transport.c`, new): a second, previously under-characterized
+  button cluster, fully traced this session (`FUN_08006988`). Sustain
+  sends standard MIDI CC 64 on press/release (unambiguous). The octave
+  buttons directly adjust `record+0x02` (clamped 0-8, hold-both-to-
+  reset-to-4), which cross-references cleanly against `keys.c`'s note
+  formula — these are now believed to be the **real** octave up/down
+  control, correcting this project's earlier guess (see next entry).
+  Tap tempo feeds `arp.c`'s `arp_tap()`.
+- **Matrix column 8 buttons** (`src/buttons.c`): still implemented (the
+  input-reading mechanism is confirmed real — matrix column 8), but no
+  longer believed to be octave buttons, and no longer wired into note
+  pitch — see `buttons.c`'s header for the reinterpretation. Its real
+  purpose is an open question again.
 - **Stuck-note safety net** (`src/stuck_note.c`): reimplements the
   original's 8-slot timeout mechanism — force-sends a Note Off for any
   key/pad note that's been held too long without a matching release.
@@ -156,14 +169,23 @@ land.
   whenever the program's arp flag is set, so pressing keys now actually
   drives the arpeggiator rather than it being a fully-implemented
   engine nothing feeds. Not wired to pad input (no evidence the
-  original arpeggiates pad hits). Still partial: gate length and latch
-  parameters aren't decoded.
+  original arpeggiates pad hits). Also gained `arp_tap()`, a real
+  tap-tempo implementation (confirmed original feature, `FUN_08006988`,
+  triggered by `transport.c`'s tap button on matrix column 7) that
+  overrides the step rate until ~2 seconds pass with no further taps —
+  simplified relative to the original's N-tap rolling average (uses
+  the single most recent interval instead). Still partial: gate length
+  and latch parameters aren't decoded.
 
 ## What's stubbed / not yet implemented
 
 - **Exact per-knob/per-pad ADC channel assignment within each confirmed
   8-channel group** (see caveats above) — the channel *ranges* are
   schematic-confirmed, the *order within* them isn't.
+- **Matrix column 8's real purpose** — reopened, see `buttons.c`.
+- **Matrix column 7 bits 0 and 3** — interact with arp-hold-array reset
+  logic in the original, not resolved with enough confidence to
+  reimplement (see `transport.c`'s header).
 - **SysEx editor protocol commands `` ` `` (raw dump capture) and `j`
   (device identification/bootstrap/factory-reset)** — not implemented
   (see `sysex.c`'s header for why). `a`, `b`, `c`, and `d` *are*

@@ -1,18 +1,19 @@
 /*
  * AD07 open-source replacement firmware -- main entry point.
  *
- * Status: keys, pads, knobs, octave buttons, stuck-note cleanup, USB,
- * and the MIDI TX pipeline are all implemented (with documented
- * placeholders where real hardware data is still needed -- see each
- * module's header comment). Per-knob CC numbers, per-pad note/CC/PC
- * numbers, MIDI channel, and arp on/off/clock-division/tempo now come
- * from a decoded per-program record (program.c) instead of standalone
- * placeholder tables. The arpeggiator itself is still not wired to
- * key/pad input. SysEx editor protocol (decoded, not yet reimplemented
- * as firmware -- receiving/sending program configs over SysEx) is
- * still TODO. See FIRMWARE_ANALYSIS.md for what's confirmed vs. still
- * unknown about the original firmware's behavior in each of these
- * areas.
+ * Status: a genuinely comprehensive reimplementation of the original's
+ * confirmed feature set -- keys (velocity-sensed), pads (Note/CC/PC),
+ * knobs, sustain pedal, real octave buttons + tap tempo (transport.c,
+ * matrix column 7), a second button cluster of uncertain purpose
+ * (buttons.c, matrix column 8), a 6-mode arpeggiator wired to key
+ * input, a shared per-program record store, SysEx program management
+ * (write/select/read/status), DFU/bootloader entry at power-on, and
+ * the full MIDI TX pipeline -- all with documented placeholders only
+ * where real hardware data is still needed (ADC pin-to-control
+ * ordering) or the original's own behavior wasn't resolved with
+ * confidence (see each module's header comment). See
+ * FIRMWARE_ANALYSIS.md for what's confirmed vs. still unknown about
+ * the original firmware's behavior in each of these areas.
  */
 #include "stm32f102.h"
 #include "systick.h"
@@ -25,6 +26,7 @@
 #include "knobs.h"
 #include "pads.h"
 #include "buttons.h"
+#include "transport.h"
 #include "stuck_note.h"
 #include "arp.h"
 #include "usb.h"
@@ -84,6 +86,7 @@ int main(void)
 	knobs_init();
 	pads_init();
 	buttons_init();
+	transport_init();
 	stuck_note_init();
 	arp_init();
 
@@ -93,6 +96,8 @@ int main(void)
 		pads_process();
 		/* Confirmed source: matrix column 8 -- see buttons.c's header. */
 		buttons_process(matrix_state[8]);
+		/* Confirmed source: matrix column 7 -- see transport.c's header. */
+		transport_process(matrix_state[7]);
 		knobs_process();
 		stuck_note_process();
 		arp_process();

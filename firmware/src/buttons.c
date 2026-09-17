@@ -1,38 +1,40 @@
 /*
- * Octave up/down buttons.
+ * Matrix column 8 button cluster -- purpose reopened, NOT octave.
  *
- * Reimplements the behavior described in FIRMWARE_ANALYSIS.md's
- * "Revised: octave/program buttons" section (FUN_080044fc, medium-high
- * confidence): a single status byte is edge-detected against its
- * previous value, and two of its bits each toggle a state between two
- * values -- interpreted there as octave up/down (a toggle-between-two-
- * states pattern rather than a simple increment/decrement, but the
- * *effect* an octave button should have is "move up/down one octave
- * per press", which is what this reimplements -- an original take on
- * the same observed behavior, not a transcription of the exact FSM).
+ * Originally implemented as "octave up/down" based on FUN_080044fc's
+ * toggle-between-two-values pattern (FIRMWARE_ANALYSIS.md's "Revised:
+ * octave/program buttons" section). That interpretation is now
+ * superseded: `FUN_08006988` (a separate, later-traced function reading
+ * a *different* matrix column) was found to implement clean, unambiguous
+ * increment/decrement/reset-to-default buttons directly modifying
+ * record+0x02 -- the field `FUN_08004990` actually uses as the
+ * keyboard's real octave in its note formula (`key_index +
+ * record[2]*12 + record[3]`, see program.h). That's a far cleaner match
+ * for "the real octave buttons" than this file's toggle-between-two-
+ * values mechanism ever was. See transport.c, which implements that
+ * confirmed mechanism on matrix column 7.
  *
- * CONFIRMED (previously an open question -- see FIRMWARE_ANALYSIS.md's
- * "Update" note in this section for the full story of tracking this
- * down): the status byte FUN_080044fc reads (SRAM 0x20000011) is
- * written by the matrix scanner itself (FUN_080048f4), not a separate
- * GPIO read or a USB/SysEx-received value as this project worried at
- * one point. It's specifically matrix **column 8** (0-indexed -- the
- * 9th and last column, matrix_state[8]) -- not column 7 as this file
- * originally guessed as a placeholder -- debounced far more heavily
- * than regular keys (8 consecutive stable reads vs. 2), and bit-
- * inverted before storage, matching how every other column is stored
- * in the original (this firmware's matrix.c already made the simpler
- * choice not to invert anywhere, consistently, so no new discrepancy
- * here). main.c now passes matrix_state[8], confirmed correct.
+ * This file's own mechanism (matrix column 8, confirmed via
+ * FIRMWARE_ANALYSIS.md's tracing of FUN_080044fc back to the matrix
+ * scanner) is still real and still implemented below, but its actual
+ * purpose is open again -- `buttons_octave_offset` is computed but no
+ * longer applied to note pitch anywhere (keys.c now uses
+ * program_octave()/program_fine_transpose() instead). Left in place,
+ * decoupled, rather than deleted, since the underlying input-reading
+ * mechanism is confirmed real even though this project's guess at what
+ * it's *for* wasn't.
  *
- * NOT YET CONFIRMED (same placeholder-honesty policy as keys.c):
- *  - Which specific bit is octave-up vs. octave-down (using bit 3 =
- *    up, bit 2 = down here, matching the doc's bit numbering, but
- *    without confirming which physical button that corresponds to).
- *  - Bit 1's "mode flag" behavior -- not reimplemented, just tracked
- *    and exposed for whatever later turns out to need it.
- *  - The original's exact octave range limits -- clamped to +/-4 here
- *    as a reasonable placeholder for a 25-key controller.
+ * NOT YET CONFIRMED:
+ *  - What this button cluster actually controls (previously guessed
+ *    octave; now believed more likely something else -- program
+ *    select, a mode/bank toggle, or a feature this project hasn't
+ *    identified -- given the "toggle between two specific values"
+ *    shape doesn't match a simple up/down counter as cleanly as
+ *    transport.c's column-7 mechanism does).
+ *  - Which specific bit is which (using bit 3/bit 2 here, matching the
+ *    doc's bit numbering, without confirming which physical button
+ *    that corresponds to).
+ *  - Bit 1's "mode flag" behavior -- not reimplemented, just tracked.
  */
 #include "buttons.h"
 

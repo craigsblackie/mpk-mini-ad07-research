@@ -58,6 +58,24 @@ uint16_t program_tempo_bpm(void);
 uint8_t program_arp_mode(void);
 uint8_t program_arp_range(void);
 
+/* record+0x02/+0x03: the keyboard's base-note transpose, confirmed via
+ * FUN_08004990 (the key edge detector)'s own note computation: `note =
+ * key_index + record[2]*12 + record[3]`. record+0x02 (0-8, factory
+ * default 4) is octave-scale (each unit = 12 semitones; default 4
+ * lands key_index 0 on... the formula's default gives 4*12+12=60,
+ * i.e. middle C, when record+0x03 is also at its factory default of
+ * 12). record+0x03 (0-24, factory default 12) is a finer transpose
+ * within that. Confirmed via `FUN_08006988`'s transport-button
+ * handler (see FIRMWARE_ANALYSIS.md) that record+0x02 specifically is
+ * live-adjustable by two dedicated buttons (increment/decrement,
+ * clamped 0-8) with a reset-to-4 combo -- i.e. these are the real
+ * octave up/down buttons, on matrix column 7 (see transport.c), not
+ * the column-8 buttons buttons.c implements (whose actual purpose is
+ * now uncertain again -- see buttons.c's header). */
+uint8_t program_octave(void);
+uint8_t program_fine_transpose(void);
+void program_set_octave(uint8_t octave); /* clamped 0-8 */
+
 #define ARP_MODE_UP 0
 #define ARP_MODE_DOWN 1
 #define ARP_MODE_UP_DOWN 2

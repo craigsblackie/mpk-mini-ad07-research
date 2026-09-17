@@ -40,11 +40,23 @@
  * needs to be for max velocity) will differ from the original if this
  * firmware's main loop runs at a different rate, but the *relative*
  * behavior (faster double-contact closure = higher velocity) is real.
+ *
+ * NOTE COMPUTATION: `note = key_index + program_octave()*12 +
+ * program_fine_transpose()`, reproduced exactly from this same
+ * function's confirmed formula (record+0x02 and record+0x03 -- see
+ * program.h). This replaces an earlier, self-invented placeholder
+ * formula (`keys_base_note + key_index + buttons_octave_offset*12`)
+ * that predated finding the original's real one. `program_octave()`
+ * is live-adjustable by transport.c's octave buttons (matrix column
+ * 7, confirmed -- see transport.c), which is now believed to be the
+ * *real* octave up/down control; buttons.c's column-8 mechanism, this
+ * project's earlier guess at "the" octave buttons, is left implemented
+ * but no longer wired into note pitch -- see buttons.c's header for
+ * the reinterpretation.
  */
 #include "keys.h"
 #include "matrix.h"
 #include "midi_ring.h"
-#include "buttons.h"
 #include "stuck_note.h"
 #include "program.h"
 #include "arp.h"
@@ -56,10 +68,6 @@
 #define KEY_IDLE 0
 #define KEY_ARMED 1
 #define KEY_FIRED 2
-
-uint8_t keys_base_note = 36; /* C2 -- a reasonable default starting point
-                               * for a 25-key controller; not confirmed
-                               * against the original's actual default. */
 
 /* [column 0..6][row bit 0..7] -> key index 0..24, or KEY_NONE.
  * CONFIRMED against the original's own lookup table -- see file header. */
@@ -92,7 +100,7 @@ void keys_init(void)
 
 static uint8_t note_for_key(uint8_t key_index)
 {
-	int16_t note = (int16_t)keys_base_note + key_index + (int16_t)buttons_octave_offset * 12;
+	int16_t note = (int16_t)key_index + (int16_t)program_octave() * 12 + program_fine_transpose();
 	if (note < 0) {
 		note = 0;
 	}

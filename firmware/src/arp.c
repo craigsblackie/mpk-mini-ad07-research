@@ -68,6 +68,13 @@ static uint32_t next_step_at_ms;
 static uint8_t last_sent_note;
 static uint8_t last_sent_active;
 static uint8_t running;
+static uint32_t last_tap_at_ms;
+static uint16_t tap_bpm;
+static uint8_t tap_active;
+
+#define TAP_TIMEOUT_MS 2000u
+#define TAP_MIN_INTERVAL_MS 250u
+#define TAP_MAX_INTERVAL_MS 2000u
 
 void arp_init(void)
 {
@@ -81,6 +88,23 @@ void arp_init(void)
 	next_step_at_ms = 0;
 	last_sent_active = 0;
 	running = 0;
+	last_tap_at_ms = 0;
+	tap_bpm = 0;
+	tap_active = 0;
+}
+
+void arp_tap(void)
+{
+	uint32_t now = systick_millis();
+	if (tap_active && (now - last_tap_at_ms) <= TAP_MAX_INTERVAL_MS) {
+		uint32_t interval = now - last_tap_at_ms;
+		if (interval < TAP_MIN_INTERVAL_MS) {
+			interval = TAP_MIN_INTERVAL_MS;
+		}
+		tap_bpm = (uint16_t)(60000u / interval);
+	}
+	last_tap_at_ms = now;
+	tap_active = 1;
 }
 
 void arp_note_on(uint8_t note, uint8_t velocity)
@@ -138,7 +162,15 @@ static void send_event(uint8_t on, uint8_t note, uint8_t velocity)
 static uint32_t step_interval_ms(void)
 {
 	uint8_t ticks_per_step = clock_div_ticks[program_arp_clock_div()];
-	uint16_t bpm = program_tempo_bpm();
+
+	uint16_t bpm;
+	if (tap_active && (systick_millis() - last_tap_at_ms) <= TAP_TIMEOUT_MS && tap_bpm > 0) {
+		bpm = tap_bpm;
+	} else {
+		tap_active = 0;
+		bpm = program_tempo_bpm();
+	}
+
 	return ((uint32_t)ticks_per_step * 2500u) / bpm;
 }
 

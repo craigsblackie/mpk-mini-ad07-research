@@ -23,8 +23,8 @@
 #include "program.h"
 
 #define OFF_CHANNEL 0x00
-#define OFF_UNKNOWN_2 0x02 /* confirmed factory default 4; meaning unidentified */
-#define OFF_UNKNOWN_3 0x03 /* confirmed factory default 12; meaning unidentified */
+#define OFF_OCTAVE 0x02 /* confirmed -- keyboard octave, see program.h */
+#define OFF_FINE_TRANSPOSE 0x03 /* confirmed -- keyboard fine transpose, see program.h */
 #define OFF_ARP_ENABLED 0x04
 #define OFF_ARP_MODE 0x05 /* confirmed via FUN_08002588's switch -- see program.h */
 #define OFF_ARP_CLOCK_DIV 0x06
@@ -51,8 +51,8 @@ static void init_one(program_record_t *p, uint8_t base_cc)
 	}
 
 	p->raw[OFF_CHANNEL] = 0;
-	p->raw[OFF_UNKNOWN_2] = 4;
-	p->raw[OFF_UNKNOWN_3] = 12;
+	p->raw[OFF_OCTAVE] = 4; /* confirmed factory default -- middle C at key_index 0 */
+	p->raw[OFF_FINE_TRANSPOSE] = 12; /* confirmed factory default */
 	p->raw[OFF_ARP_ENABLED] = 0;
 	p->raw[OFF_ARP_MODE] = 1; /* confirmed factory default -- DOWN, see program.h */
 	p->raw[OFF_ARP_CLOCK_DIV] = 5;
@@ -86,6 +86,25 @@ uint8_t program_channel(void)
 {
 	uint8_t ch = programs[current_program].raw[OFF_CHANNEL];
 	return (uint8_t)(ch & 0x0F);
+}
+
+uint8_t program_octave(void)
+{
+	uint8_t o = programs[current_program].raw[OFF_OCTAVE];
+	return (uint8_t)(o > 8 ? 8 : o);
+}
+
+uint8_t program_fine_transpose(void)
+{
+	return programs[current_program].raw[OFF_FINE_TRANSPOSE];
+}
+
+void program_set_octave(uint8_t octave)
+{
+	if (octave > 8) {
+		octave = 8;
+	}
+	programs[current_program].raw[OFF_OCTAVE] = octave;
 }
 
 uint8_t program_arp_enabled(void)
