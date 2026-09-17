@@ -447,19 +447,58 @@ exhaustive manual correlation of the remaining byte-shuffle table entries
 against known AKAI editor software behavior, or empirical testing (send
 a SysEx dump, change one setting in the real editor, dump again, diff).
 
-## Candidates: two more flag-gated handlers, not yet resolved
+## Revised: octave/program buttons + device-initiated SysEx — `FUN_080044fc` (medium-high confidence)
 
-- `FUN_080044fc`: compares a single status byte against its previous value,
-  branches on individual bits (bit 0, bit 1) of the new value. Small local
-  buffer (~14 bytes, consistent with building one short MIDI message).
-  Plausible candidates: sustain pedal / footswitch input, or joystick
-  button click. Not confirmed.
-- `FUN_08003ab8`: same flag-gated "process when ready" shape as the knob
-  handler (`FUN_0800478c`) and tap-tempo candidate. Not traced deep enough
-  yet to characterize. Plausible candidate given the MPK Mini's control
-  layout: the 4-way joystick (pitch bend + mod wheel), since that's the
-  one remaining major physical control not yet accounted for by the
-  functions above.
+Full trace revises the earlier "sustain pedal?" guess — this doesn't match
+that pattern at all on closer reading.
+
+- Reads a status byte, edge-detects against the previous value (standard
+  pattern throughout this firmware).
+- Bit 0 = released/center (the "else" branch resets state on bit0=1).
+- Bits 1, 2, 3 (tested via `(x << 30/29/28) < 0`, i.e. individual bit
+  tests) each drive different behavior when bit 0 = 0:
+  - Bit 1: sets a mode flag and a status byte to `0xFF`.
+  - Bit 2 and bit 3: each **toggle a state byte between two specific
+    values** (`3↔1` for bit 3, `2↔1` for bit 2) — a toggle-between-two-
+    states pattern, not a simple increment/decrement. Strongly suggestive
+    of **octave up/down buttons**, a real, distinctive physical control on
+    this keyboard, rather than a pedal (pedals are typically simple
+    binary on/off, not this three-way bit-tested structure).
+- When a *different* trigger condition holds (`*DAT_080045c8 != 0`), the
+  function instead builds and sends a **complete, device-initiated SysEx
+  message** via `ring_push`: `F0 47 00 04 7C 6A 00 04 04 5B 00 07 <byte>
+  F7`. **This independently confirms `0x47` immediately after `0xF0` is
+  AKAI's manufacturer ID** — matching, byte-for-byte, the `'G'` (ASCII
+  0x47) signature byte found in the editor-protocol handler
+  (`FUN_08002eac`) above. Two unrelated functions agreeing on this byte is
+  strong cross-confirmation it's genuinely the manufacturer ID, not a
+  coincidental ASCII match. The message is very likely a status
+  notification back to a connected editor (e.g. reporting an octave or
+  program change), not user-facing MIDI.
+
+## Revised: pad velocity sensing — `FUN_08003ab8` (medium confidence)
+
+Full trace also revises the earlier "joystick?" guess. The loop structure
+reads a per-pad analog-like value (via the same kind of table-indexed
+lookup pattern as the knob handler, `DAT_08003e14[...]`, strongly
+suggesting it also reads from the ADC/DMA-refreshed buffer, likely a
+*different* set of channels than the 8 used for knobs), applies threshold
+gating (`< 0x41`, `> 0x80`) and a linear scale-to-127 formula
+(`((value - 0x80) * 0x7F) / 0x220`, clamped) that looks exactly like
+**velocity scaling for a pressure/velocity-sensitive drum pad**, with a
+small state machine per pad tracking hit/release/decay phases (fields at
+offsets `+1` through `+5` of a per-pad record).
+
+**This revises the earlier ADC-channel-count note**: the original
+firmware's 16-channel ADC scan (`FIRMWARE_ANALYSIS.md`'s ADC/DMA section)
+is now more plausibly 8 knobs + 8 pad-velocity-sense channels, not 8
+knobs + unused headroom as originally guessed.
+
+**Net effect on the joystick question**: neither of these two functions
+is the pitch/mod joystick after all — that control's handling function
+remains unidentified. Worth a fresh targeted search (e.g. for a function
+reading exactly 2 additional ADC-style channels with bipolar/centered
+scaling, characteristic of pitch bend).
 
 ## Candidate: tap-tempo / arpeggiator clock — `FUN_08006988` (low confidence)
 
