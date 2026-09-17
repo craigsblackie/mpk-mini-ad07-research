@@ -20,12 +20,15 @@ land.
   `matrix_state[]` against the previous scan and pushes MIDI events for
   every transition. **This is the intended mirror tap point for the
   ESP32-C3 BLE MIDI project** — see the TODO comment in `send_note()` in
-  `keys.c`. **Important caveat**: the physical (column, row-bit) → key
-  index mapping (`key_index_table` in `keys.c`) is a placeholder, all
-  "no key" — the original firmware's lookup table wasn't traced precisely
-  enough to be confident of the exact mapping, so this was left honest
-  rather than guessed. Needs filling in from real hardware testing before
-  keys actually produce correct notes.
+  `keys.c`. The physical (column, row-bit) → key index mapping
+  (`key_index_table` in `keys.c`) is now **confirmed**, not a placeholder
+  — disassembling the original directly against the verified firmware
+  binary found the real indexing formula and the 28-byte lookup table it
+  reads, both reproduced exactly. One known simplification remains: the
+  original pairs two row-bits per key (likely genuine dual-switch
+  velocity sensing) and this module doesn't yet reimplement that, so a
+  keypress may emit two Note On events instead of one velocity-scaled
+  one — see `keys.c`'s header comment.
 - **USB descriptors** (`src/usb_descriptors.c`): byte-verified against the
   real device, needed for class-compliant enumeration.
 - **USB device stack** (`src/usb.c`): minimal STM32F1 USB peripheral
@@ -82,8 +85,9 @@ land.
 
 ## What's stubbed / not yet implemented
 
-- **The key-index lookup table** (see caveat above) — the single biggest
-  remaining gap now that the rest of the key→MIDI pipeline exists.
+- **Dual-switch key velocity sensing** (see caveat above) — the key-index
+  mapping itself is resolved; deriving real per-key velocity from the
+  two-switch timing (rather than a fixed default) is the remaining gap.
 - **Knob ADC-channel/CC-number and pad ADC-channel/note-number mappings**
   (see caveats above).
 - **Octave-button input source** (see caveat above).

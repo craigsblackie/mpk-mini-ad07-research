@@ -6,17 +6,28 @@
  * previous scan, and for each bit that transitioned, emit a Note
  * On (bit now set) or Note Off (bit now clear) USB-MIDI event.
  *
- * NOT YET CONFIRMED: the exact mapping from (column, row-bit) to which
- * of the keyboard's 25 physical keys it is. The original firmware's
- * lookup table (flash 0x08006fcd) contains a clean sequential 0..24
- * byte sequence -- strongly suggesting a simple "key index" that gets
- * added to a base/octave note elsewhere -- but the precise indexing
- * formula from (column, bit-position) into that table wasn't fully
- * traced (FIRMWARE_ANALYSIS.md's FUN_08004990 notes). Rather than
- * guess and risk silently wrong note mappings, key_index_table[][]
- * below is left as "no key" placeholders. TODO: fill in from real
- * hardware testing (press each key, observe which (col,row) fires) or
- * further trace analysis, before this is useful on real hardware.
+ * CONFIRMED (previously a placeholder): the (column, row-bit) -> key
+ * index mapping. Disassembling FUN_08004990 directly against the
+ * verified firmware binary (arm-none-eabi-objdump, since finishing
+ * this trace needed instruction-level detail the decompiler's
+ * pseudocode had flattened away) found the real indexing formula --
+ * `table_index = column*4 + (bit >> 1)` -- and the table it indexes
+ * into, at flash 0x08006fcd: 28 bytes, `00 01 02 ... 18 FF FF FF`
+ * (0x18 = 24). key_index_table[][] below is exactly that formula and
+ * that data, not a guess.
+ *
+ * NOT reimplemented here: the original pairs row-bits 2N and 2N+1 into
+ * the SAME key index (hence `bit >> 1` above) and uses a small state
+ * machine (armed/fired per key) plus a timestamp delta between the two
+ * bits' transitions to derive velocity -- strongly suggestive of a
+ * genuine dual-switch, velocity-sensing keybed, not just a single
+ * on/off contact per key. This module still treats each bit
+ * independently, so a physical keypress that closes both switches of
+ * its pair will currently emit two Note On (and later two Note Off)
+ * events a scan or two apart instead of one velocity-sensed event.
+ * Functionally harmless for basic testing (both events target the same
+ * note), but worth fixing once there's a tick/timestamp source to
+ * derive real velocity from, and to suppress the duplicate.
  */
 #include "keys.h"
 #include "matrix.h"
@@ -32,15 +43,15 @@ uint8_t keys_base_note = 36; /* C2 -- a reasonable default starting point
                                * against the original's actual default. */
 
 /* [column 0..6][row bit 0..7] -> key index 0..24, or KEY_NONE.
- * TODO: unverified placeholder, see file header. */
+ * CONFIRMED against the original's own lookup table -- see file header. */
 static const uint8_t key_index_table[7][8] = {
-	{KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE},
-	{KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE},
-	{KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE},
-	{KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE},
-	{KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE},
-	{KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE},
-	{KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE},
+	{0, 0, 1, 1, 2, 2, 3, 3},
+	{4, 4, 5, 5, 6, 6, 7, 7},
+	{8, 8, 9, 9, 10, 10, 11, 11},
+	{12, 12, 13, 13, 14, 14, 15, 15},
+	{16, 16, 17, 17, 18, 18, 19, 19},
+	{20, 20, 21, 21, 22, 22, 23, 23},
+	{24, 24, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE},
 };
 
 static uint8_t previous_state[MATRIX_COLS];

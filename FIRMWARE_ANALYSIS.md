@@ -777,3 +777,49 @@ this document. Plausibly the source of the single status byte
 transmitted in `FUN_080044fc`'s device-initiated SysEx message (`F0 47
 00 04 7C 6A 00 04 04 5B 00 07 <byte> F7`) — consistent in shape, not
 independently confirmed. Flagged for follow-up rather than relied on.
+
+## Resolved: the key-index lookup table and its indexing formula (high confidence)
+
+Previously the single biggest open placeholder in `firmware/`: the
+(column, row-bit) → physical key mapping. `FUN_08004990` (the key edge
+detector, already documented above) was known to be fully traced with
+"no hidden untraced content," but the exact indexing formula into its
+0x08006fcd lookup table hadn't been pulled out of the decompiler's
+pseudocode — the arithmetic survived decompilation as opaque bit-shift
+expressions. Disassembling it directly (`arm-none-eabi-objdump` against
+the verified firmware binary, since the live Ghidra session was
+unavailable for part of this pass) resolved it cleanly:
+
+```
+table_index = column * 4 + (bit_position >> 1)
+key_index   = table[table_index]
+```
+
+Read directly from the raw binary, the table at `0x08006fcd` (28 bytes,
+7 columns × 4 slots) is:
+
+```
+00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+10 11 12 13 14 15 16 17 18 ff ff ff
+```
+
+i.e. a clean `0..24` sequence followed by three `0xFF` ("no key")
+sentinels — confirming both the formula and this project's earlier
+guess that the table was a simple sequential key index. **This directly
+resolves `firmware/keys.c`'s `key_index_table[][]` placeholder** with
+real, hardware-fact data rather than a guess (now implemented there).
+
+**A genuinely new sub-finding surfaced by finishing this trace**: the
+formula's `bit_position >> 1` means two adjacent row-bits (`2N`,
+`2N+1`) within a column map to the *same* key index. The surrounding
+code (already partially read during the original pass, not re-derived
+here) branches on whether the triggering bit is even or odd, uses a
+per-key armed/fired state (so only the first of the pair actually
+fires), and computes a timestamp delta between the two bits' edges that
+directly becomes the outgoing Note On velocity byte. This is strong
+evidence the physical keybed uses **two switches per key for genuine
+velocity sensing** (a make-before-break dual-contact design), not a
+single on/off contact — a more sophisticated keybed than this project
+had assumed. Not reimplemented in `firmware/` yet (no tick/timestamp
+source exists there), tracked as a follow-up rather than the
+resolved-and-done key-index mapping itself.
