@@ -36,4 +36,20 @@
  * Always returns 1..127: zero would turn a Note On into a Note Off. */
 uint8_t velocity_apply(uint8_t curve, uint8_t velocity, uint8_t fixed);
 
+/*
+ * Turn the gap between a key's two contacts into a raw 1..127 velocity.
+ *
+ * `fast_ms` is the interval a full-force strike produces and maps to 127;
+ * `slow_ms` is the gentlest playable press and maps to 1. Anything outside
+ * that window clamps, so the scale cannot run off either end.
+ *
+ * The original firmware counted main-loop iterations here rather than real
+ * time (see keys.c). That made the feel a property of how fast the loop
+ * happened to run: this firmware's loop is quicker than the original's, so
+ * an ordinary press overran the 126-count range and pinned every note to
+ * velocity 1. Measuring in milliseconds makes the response a property of
+ * the keybed instead, and immune to later changes in the loop.
+ */
+uint8_t velocity_from_interval(uint32_t delta_ms, uint8_t fast_ms, uint8_t slow_ms);
+
 #endif /* VELOCITY_H */

@@ -79,6 +79,46 @@ int main(void)
 	   velocity_apply(VELOCITY_CURVE_COUNT + 9, 77, 100) == 77, NULL);
 	ok("zero input never returns zero", velocity_apply(VELOCITY_SOFT, 0, 100) >= 1, NULL);
 
+	/* --- interval mapping: the fix for the saturation bug --- */
+	{
+		const uint8_t FAST = 4, SLOW = 60;
+		ok("hard strike reaches full scale",
+		   velocity_from_interval(FAST, FAST, SLOW) == 127, "at fast_ms");
+		ok("faster than the window still 127",
+		   velocity_from_interval(0, FAST, SLOW) == 127, "clamps, never wraps");
+		ok("gentlest press reaches the floor",
+		   velocity_from_interval(SLOW, FAST, SLOW) == 1, "at slow_ms");
+		ok("slower than the window stays 1",
+		   velocity_from_interval(10000, FAST, SLOW) == 1, "clamps, never wraps");
+
+		int mono = 1, ranged = 1;
+		uint8_t prev = 128;
+		for (uint32_t d = 0; d <= 200; d++) {
+			uint8_t v = velocity_from_interval(d, FAST, SLOW);
+			if (v < 1 || v > 127) ranged = 0;
+			if (v > prev) mono = 0;
+			prev = v;
+		}
+		ok("response decreases monotonically", mono, "slower press, lower velocity");
+		ok("interval output stays in 1..127", ranged, "0..200 ms swept");
+
+		/* The whole point: an ordinary press must land mid-scale, not at
+		 * the floor the way the loop-counter version did. */
+		uint8_t mid = velocity_from_interval((FAST + SLOW) / 2, FAST, SLOW);
+		sprintf(buf, "%u ms -> velocity %u", (FAST + SLOW) / 2, mid);
+		ok("mid-speed press lands mid-scale", mid > 50 && mid < 80, buf);
+
+		int spread = 0;
+		for (uint32_t d = FAST; d <= SLOW; d += 5)
+			if (velocity_from_interval(d, FAST, SLOW) > 100) spread++;
+		ok("upper range is reachable", spread >= 2, "several intervals exceed 100");
+
+		ok("degenerate window does no harm",
+		   velocity_from_interval(20, 60, 4) == 127, "inverted window clamps high");
+		ok("collapsed window does no harm",
+		   velocity_from_interval(20, 30, 30) == 127, "fast == slow");
+	}
+
 	printf("\n%s\n", fails ? "FAILURES PRESENT" : "all velocity tests passed");
 	return fails != 0;
 }

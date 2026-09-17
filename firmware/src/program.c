@@ -46,17 +46,27 @@
 #define SETTINGS_MAGIC_1 'P'
 #define SETTINGS_MAGIC_2 'K'
 #define SETTINGS_MAGIC_3 'S'
-#define SETTINGS_VERSION 1
+#define SETTINGS_VERSION 2
 #define SETTINGS_BLOCK_SIZE 16u
 #define SETTINGS_OFF_VERSION 4
 #define SETTINGS_OFF_KEY_CURVE 5
 #define SETTINGS_OFF_PAD_CURVE 6
 #define SETTINGS_OFF_KEY_FIXED 7
 #define SETTINGS_OFF_PAD_FIXED 8
+/* Added in version 2. A version 1 block is still accepted; these two take
+ * their defaults, which is exactly what a v1 device had implicitly. */
+#define SETTINGS_OFF_KEY_FAST_MS 9
+#define SETTINGS_OFF_KEY_SLOW_MS 10
 #define PAGE_IMAGE_SIZE (SETTINGS_OFFSET + SETTINGS_BLOCK_SIZE)
 
 #define SETTINGS_DEFAULT_CURVE VELOCITY_LINEAR
 #define SETTINGS_DEFAULT_FIXED 100
+
+/* Starting window for the key velocity scale. These are a first estimate
+ * for a mini rubber-dome keybed, not measured values -- program_velocity_stats()
+ * exists so they can be replaced with real ones without reflashing. */
+#define SETTINGS_DEFAULT_FAST_MS 4
+#define SETTINGS_DEFAULT_SLOW_MS 60
 
 program_record_t programs[PROGRAM_COUNT];
 uint8_t current_program;
@@ -69,9 +79,17 @@ typedef struct {
 	uint8_t pad_curve;
 	uint8_t key_fixed;
 	uint8_t pad_fixed;
+	uint8_t key_fast_ms;
+	uint8_t key_slow_ms;
 } settings_t;
 
 static settings_t settings;
+
+/* Calibration telemetry, RAM only -- never persisted. */
+static uint16_t vel_min_ms;
+static uint16_t vel_max_ms;
+static uint16_t vel_last_ms;
+static uint16_t vel_count;
 
 /* Four factory records read directly from the verified stock image. */
 static const uint8_t factory_programs[PERSIST_RECORDS][PROGRAM_RECORD_SIZE] = {
@@ -143,6 +161,8 @@ static void settings_defaults(void)
 	settings.pad_curve = SETTINGS_DEFAULT_CURVE;
 	settings.key_fixed = SETTINGS_DEFAULT_FIXED;
 	settings.pad_fixed = SETTINGS_DEFAULT_FIXED;
+	settings.key_fast_ms = SETTINGS_DEFAULT_FAST_MS;
+	settings.key_slow_ms = SETTINGS_DEFAULT_SLOW_MS;
 }
 
 static void settings_validate(void)
@@ -151,6 +171,14 @@ static void settings_validate(void)
 	if (settings.pad_curve >= VELOCITY_CURVE_COUNT) settings.pad_curve = SETTINGS_DEFAULT_CURVE;
 	if (settings.key_fixed == 0 || settings.key_fixed > 127) settings.key_fixed = SETTINGS_DEFAULT_FIXED;
 	if (settings.pad_fixed == 0 || settings.pad_fixed > 127) settings.pad_fixed = SETTINGS_DEFAULT_FIXED;
+	if (settings.key_fast_ms > 127) settings.key_fast_ms = SETTINGS_DEFAULT_FAST_MS;
+	if (settings.key_slow_ms > 127) settings.key_slow_ms = SETTINGS_DEFAULT_SLOW_MS;
+	/* An inverted or collapsed window would make every note the same
+	 * velocity; fall back rather than render the keyboard expressionless. */
+	if (settings.key_slow_ms <= settings.key_fast_ms) {
+		settings.key_fast_ms = SETTINGS_DEFAULT_FAST_MS;
+		settings.key_slow_ms = SETTINGS_DEFAULT_SLOW_MS;
+	}
 }
 
 /* An erased page, or one written before the block existed, reads as no
@@ -158,16 +186,23 @@ static void settings_validate(void)
 static void settings_load(const volatile uint8_t *flash)
 {
 	const volatile uint8_t *b = &flash[SETTINGS_OFFSET];
+	uint8_t version = b[SETTINGS_OFF_VERSION];
 	if (b[0] != SETTINGS_MAGIC_0 || b[1] != SETTINGS_MAGIC_1 ||
 	    b[2] != SETTINGS_MAGIC_2 || b[3] != SETTINGS_MAGIC_3 ||
-	    b[SETTINGS_OFF_VERSION] != SETTINGS_VERSION) {
+	    version == 0 || version > SETTINGS_VERSION) {
 		settings_defaults();
 		return;
 	}
+	settings_defaults();
 	settings.key_curve = b[SETTINGS_OFF_KEY_CURVE];
 	settings.pad_curve = b[SETTINGS_OFF_PAD_CURVE];
 	settings.key_fixed = b[SETTINGS_OFF_KEY_FIXED];
 	settings.pad_fixed = b[SETTINGS_OFF_PAD_FIXED];
+	/* Version 1 predates the velocity window; its defaults stand. */
+	if (version >= 2) {
+		settings.key_fast_ms = b[SETTINGS_OFF_KEY_FAST_MS];
+		settings.key_slow_ms = b[SETTINGS_OFF_KEY_SLOW_MS];
+	}
 	settings_validate();
 }
 
@@ -231,6 +266,8 @@ void program_persist(void)
 	b[SETTINGS_OFF_PAD_CURVE] = settings.pad_curve;
 	b[SETTINGS_OFF_KEY_FIXED] = settings.key_fixed;
 	b[SETTINGS_OFF_PAD_FIXED] = settings.pad_fixed;
+	b[SETTINGS_OFF_KEY_FAST_MS] = settings.key_fast_ms;
+	b[SETTINGS_OFF_KEY_SLOW_MS] = settings.key_slow_ms;
 	uint32_t primask;
 	__asm volatile ("mrs %0, primask\n cpsid i" : "=r"(primask) :: "memory");
 	if (FLASH_IF->CR & FLASH_CR_LOCK) {
@@ -306,6 +343,27 @@ void program_save_to_wire(uint8_t n, uint8_t wire[PROGRAM_RECORD_SIZE]) {
 }
 
 uint8_t program_key_curve(void) { return settings.key_curve; }
+uint8_t program_key_fast_ms(void) { return settings.key_fast_ms; }
+uint8_t program_key_slow_ms(void) { return settings.key_slow_ms; }
+
+void program_note_velocity_interval(uint32_t delta_ms)
+{
+	uint16_t ms = delta_ms > 0xffffu ? 0xffffu : (uint16_t)delta_ms;
+	if (vel_count == 0 || ms < vel_min_ms) vel_min_ms = ms;
+	if (vel_count == 0 || ms > vel_max_ms) vel_max_ms = ms;
+	vel_last_ms = ms;
+	if (vel_count < 0xffffu) vel_count++;
+}
+
+void program_velocity_stats(uint8_t out[4])
+{
+	/* Saturate rather than wrap: a 7-bit payload that reads 127 says
+	 * "at least this", which is all the calibration needs. */
+	out[0] = vel_count == 0 ? 0 : (vel_min_ms > 127u ? 127u : (uint8_t)vel_min_ms);
+	out[1] = vel_max_ms > 127u ? 127u : (uint8_t)vel_max_ms;
+	out[2] = vel_last_ms > 127u ? 127u : (uint8_t)vel_last_ms;
+	out[3] = vel_count > 127u ? 127u : (uint8_t)vel_count;
+}
 uint8_t program_pad_curve(void) { return settings.pad_curve; }
 uint8_t program_key_fixed_velocity(void) { return settings.key_fixed; }
 uint8_t program_pad_fixed_velocity(void) { return settings.pad_fixed; }
@@ -316,6 +374,8 @@ void program_settings_to_wire(uint8_t wire[SETTINGS_PAYLOAD_SIZE])
 	wire[1] = settings.pad_curve;
 	wire[2] = settings.key_fixed;
 	wire[3] = settings.pad_fixed;
+	wire[4] = settings.key_fast_ms;
+	wire[5] = settings.key_slow_ms;
 }
 
 void program_settings_from_wire(const uint8_t wire[SETTINGS_PAYLOAD_SIZE])
@@ -324,5 +384,7 @@ void program_settings_from_wire(const uint8_t wire[SETTINGS_PAYLOAD_SIZE])
 	settings.pad_curve = wire[1];
 	settings.key_fixed = wire[2];
 	settings.pad_fixed = wire[3];
+	settings.key_fast_ms = wire[4];
+	settings.key_slow_ms = wire[5];
 	settings_validate();
 }

@@ -62,6 +62,7 @@
 #include "pads.h"
 #include "transport.h"
 #include "velocity.h"
+#include "systick.h"
 
 #define KEY_NONE 0xFF
 #define KEY_COUNT 25
@@ -84,8 +85,8 @@ static const uint8_t key_index_table[7][8] = {
 
 static uint8_t previous_state[MATRIX_COLS];
 static uint8_t key_state[KEY_COUNT];
-static uint16_t key_arm_tick[KEY_COUNT];
-static uint16_t scan_tick;
+/* Milliseconds (systick) at which each key's first contact closed. */
+static uint32_t key_arm_ms[KEY_COUNT];
 static uint8_t key_suppressed[KEY_COUNT];
 static uint8_t key_note[KEY_COUNT];
 static uint8_t key_channel[KEY_COUNT];
@@ -98,13 +99,12 @@ void keys_init(void)
 	}
 	for (int i = 0; i < KEY_COUNT; i++) {
 		key_state[i] = KEY_IDLE;
-		key_arm_tick[i] = 0;
+		key_arm_ms[i] = 0;
 		key_suppressed[i] = 0;
 		key_note[i] = 0;
 		key_channel[i] = 0;
 		key_to_arp[i] = 0;
 	}
-	scan_tick = 0;
 }
 
 static uint8_t note_for_key(uint8_t key_index)
@@ -205,7 +205,7 @@ static void handle_bit(uint8_t key_index, int bit, uint8_t released)
 		if (released) {
 			if (key_state[key_index] == KEY_IDLE) {
 				key_state[key_index] = KEY_ARMED;
-				key_arm_tick[key_index] = scan_tick;
+				key_arm_ms[key_index] = systick_millis();
 			}
 		} else {
 			if (key_state[key_index] == KEY_FIRED) {
@@ -217,15 +217,17 @@ static void handle_bit(uint8_t key_index, int bit, uint8_t released)
 		/* Even sub-switch: fire Note On on reaching "released" while
 		 * armed, velocity from the tick delta since arming. */
 		if (released && key_state[key_index] == KEY_ARMED) {
-			uint16_t delta = (uint16_t)(scan_tick - key_arm_tick[key_index]);
-			if (delta > 126) {
-				delta = 126;
-			}
-			/* The original's linear inversion is the raw reading; the
-			 * curve then shapes it. VELOCITY_LINEAR is the default and
-			 * passes it through untouched, so stock feel is preserved
-			 * unless the player asks for something else. */
-			uint8_t velocity = (uint8_t)(127 - delta);
+			/* Real elapsed time, not main-loop iterations. The original
+			 * counted iterations, which tied the feel to whatever rate
+			 * its loop happened to run at; this loop is quicker, so an
+			 * ordinary press overran the 126-count range and pinned
+			 * every note to velocity 1. See velocity.h. */
+			uint32_t delta_ms = systick_millis() - key_arm_ms[key_index];
+			program_note_velocity_interval(delta_ms);
+
+			uint8_t velocity = velocity_from_interval(delta_ms,
+			                                          program_key_fast_ms(),
+			                                          program_key_slow_ms());
 			velocity = velocity_apply(program_key_curve(), velocity,
 			                          program_key_fixed_velocity());
 			key_state[key_index] = KEY_FIRED;
@@ -236,8 +238,6 @@ static void handle_bit(uint8_t key_index, int bit, uint8_t released)
 
 void keys_process(void)
 {
-	scan_tick++;
-
 	/* Columns 0-6 carry the 7x8 key matrix per FIRMWARE_ANALYSIS.md;
 	 * columns 7-8 are special-cased in the original for a smaller
 	 * number of inputs (transport/other buttons -- see buttons.c). */

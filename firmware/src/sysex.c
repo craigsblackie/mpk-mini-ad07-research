@@ -163,8 +163,10 @@ static void send_status(void)
  * settings are global and have no program to address:
  *
  *   read   F0 47 <id> 7C 'v' 00 01 00 F7
- *   reply  F0 47 <id> 7C 'v' 00 05 00 <4 payload bytes> F7
- *   write  F0 47 <id> 7C 'v' 00 05 01 <4 payload bytes> F7
+ *   reply  F0 47 <id> 7C 'v' 00 07 00 <6 payload bytes> F7
+ *   write  F0 47 <id> 7C 'v' 00 07 01 <6 payload bytes> F7
+ *   stats  F0 47 <id> 7C 'v' 00 01 02 F7
+ *   reply  F0 47 <id> 7C 'v' 00 05 02 <4 telemetry bytes> F7
  *
  * As with the stock commands, the length field counts byte 7 plus the
  * payload. 'v' was chosen because stock uses only 'a', 'b', 'c', 'd',
@@ -173,7 +175,29 @@ static void send_status(void)
  */
 #define SETTINGS_SUBCMD_READ 0
 #define SETTINGS_SUBCMD_WRITE 1
+#define SETTINGS_SUBCMD_STATS 2
 #define SETTINGS_MSG_LEN (HEADER_LEN + SETTINGS_PAYLOAD_SIZE + 1)
+#define STATS_PAYLOAD_SIZE 4
+#define STATS_MSG_LEN (HEADER_LEN + STATS_PAYLOAD_SIZE + 1)
+
+/* Calibration telemetry: shortest, longest and most recent contact
+ * intervals in milliseconds, and how many keys have been struck. Read-only
+ * and RAM-only -- nothing here is persisted. */
+static void send_velocity_stats(void)
+{
+	uint8_t msg[STATS_MSG_LEN];
+	msg[0] = 0xF0;
+	msg[1] = 0x47;
+	msg[2] = last_id;
+	msg[3] = 0x7C;
+	msg[4] = 'v';
+	msg[5] = 0x00;
+	msg[6] = STATS_PAYLOAD_SIZE + 1;
+	msg[7] = SETTINGS_SUBCMD_STATS;
+	program_velocity_stats(&msg[HEADER_LEN]);
+	msg[STATS_MSG_LEN - 1] = 0xF7;
+	pack_and_send(msg, STATS_MSG_LEN);
+}
 
 static void send_settings(void)
 {
@@ -230,6 +254,8 @@ static void sysex_process(void)
 		 * must be handled before the program-range guard below. */
 		if (sysex_buf[7] == SETTINGS_SUBCMD_READ) {
 			send_settings();
+		} else if (sysex_buf[7] == SETTINGS_SUBCMD_STATS) {
+			send_velocity_stats();
 		} else if (sysex_buf[7] == SETTINGS_SUBCMD_WRITE &&
 		           sysex_len == SETTINGS_MSG_LEN && sysex_buf[5] == 0 &&
 		           sysex_buf[6] == SETTINGS_PAYLOAD_SIZE + 1) {

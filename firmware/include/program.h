@@ -156,12 +156,28 @@ void program_save_to_wire(uint8_t program_index, uint8_t wire[PROGRAM_RECORD_SIZ
  * program_persist() erases the whole page, so it writes both areas in
  * one pass -- settings survive a program save and vice versa.
  */
-#define SETTINGS_PAYLOAD_SIZE 4
+#define SETTINGS_PAYLOAD_SIZE 6
 
 uint8_t program_key_curve(void);
 uint8_t program_pad_curve(void);
 uint8_t program_key_fixed_velocity(void);
 uint8_t program_pad_fixed_velocity(void);
+
+/* Key velocity window, in milliseconds between the two contacts: the
+ * interval a hard strike produces (mapped to 127) and the gentlest
+ * playable press (mapped to 1). Tunable at runtime because the right
+ * values are a property of the keybed, not of this code -- see
+ * program_velocity_stats() for measuring them on a real instrument. */
+uint8_t program_key_fast_ms(void);
+uint8_t program_key_slow_ms(void);
+
+/* Calibration telemetry: the shortest, longest and most recent contact
+ * intervals seen since boot, plus how many keys have been struck
+ * (each saturating at 127 so it stays a 7-bit SysEx payload). Feed a
+ * minute of ordinary playing in, then set the window from what comes
+ * out. Reading does not reset them. */
+void program_note_velocity_interval(uint32_t delta_ms);
+void program_velocity_stats(uint8_t out[4]);
 
 /* Pack/unpack the 7-bit-safe SysEx payload. Out-of-range values are
  * clamped rather than rejected, so a partially understood payload from a

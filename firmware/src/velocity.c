@@ -70,3 +70,14 @@ uint8_t velocity_apply(uint8_t curve, uint8_t velocity, uint8_t fixed)
 		return velocity; /* VELOCITY_LINEAR -- stock behaviour */
 	}
 }
+
+uint8_t velocity_from_interval(uint32_t delta_ms, uint8_t fast_ms, uint8_t slow_ms)
+{
+	if (slow_ms <= fast_ms) return 127; /* nonsensical window -- do no harm */
+	if (delta_ms <= fast_ms) return 127;
+	if (delta_ms >= slow_ms) return 1;
+
+	uint32_t span = (uint32_t)slow_ms - fast_ms;
+	uint32_t into = delta_ms - fast_ms;
+	return (uint8_t)(127u - (into * 126u) / span);
+}
