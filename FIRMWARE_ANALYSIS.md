@@ -777,16 +777,34 @@ original's accumulate-and-shift, this project's sum-and-average)
 converging on the same channel count and oversample factor is a good
 sign this project's earlier, less-certain ADC finding was correct.
 
-### `FUN_08004c90` — likely a device/mode status-byte builder (low-medium confidence)
+### `FUN_08004c90` — likely a pad output-mode status tracker (medium confidence)
 
-Complex, only partially traced. Builds an 8-bit value bit-by-bit from
-several one-hot-encoded selector fields (values 1-8 mapped to bits
-`0x01`-`0x80`, in two separate 8-case switches) and multiple 8-iteration
-loops indexed the same way pad-related loops are indexed elsewhere in
-this document. Plausibly the source of the single status byte
-transmitted in `FUN_080044fc`'s device-initiated SysEx message (`F0 47
-00 04 7C 6A 00 04 04 5B 00 07 <byte> F7`) — consistent in shape, not
-independently confirmed. Flagged for follow-up rather than relied on.
+Complex, only partially traced. **Correction**: an earlier pass of this
+document guessed this might feed `FUN_080044fc`'s SysEx status byte —
+disproven now that live Ghidra access confirmed `FUN_080044fc`'s status
+byte comes straight from the matrix scanner (see the octave-button
+resolution above), unrelated to this function. Re-characterized:
+
+- **First branch** (gated on a flag, `*DAT_08004da4 != 0`): decodes a
+  command-like byte (`*DAT_08004db0`) into one-hot bitmasks written to
+  two separate output bytes — values 1-8 set bits in one byte, 9-0x10
+  in the other, and 0x7f resets both to `0xFF`. Shaped like decoding a
+  received "select slot N" command (a host/editor command, or an
+  internal dispatch value) rather than anything GPIO-driven.
+- **Second branch** (the flag clear): iterates 8 slots, and for each,
+  reads one of three record-relative bytes (offsets `+4`/`+6`/`+8` from
+  a per-slot, stride-10 table) selected by a shared mode value
+  (`*DAT_08003f6c`, 1/2/3) — the same 1/2/3 mode-selection shape already
+  found in `FUN_08003ab8`'s pad Note/Program-Change/Control-Change
+  selection. Diffs each against a stored previous value and, on change,
+  sets or clears the corresponding bit of an 8-bit output byte.
+
+**Best current guess**: a status-byte builder tracking which of the 8
+pads currently has an active/non-default value in whichever output mode
+(Note/PC/CC) is selected — plausibly feeding a host-facing "pad state"
+report, separate from `FUN_080044fc`'s octave-button message. Not
+confirmed which consumer reads the resulting byte; flagged for
+follow-up rather than relied on.
 
 ## Resolved: the key-index lookup table and its indexing formula (high confidence)
 
