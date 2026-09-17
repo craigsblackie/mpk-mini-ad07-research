@@ -917,21 +917,42 @@ is physically consistent with the reference being real elapsed time in
 milliseconds — a plausible window for two mechanical contacts closing
 in sequence during a keypress.
 
-**What's still open**: what actually increments
-`*(short*)(DAT_08004c04+4)`. `get_xrefs_to` found two writers
-(`0x08006108`, `0x0800610e`) and one more reader (`0x080060fe`)
-outside `FUN_08004990` itself, but none of them fall inside a function
-boundary Ghidra's auto-analysis has identified — they're in a gap in
-the current analysis coverage. Chasing this further would need either
-manually defining a function there (a five-minute job in the Ghidra
-GUI, not attempted this pass) or empirical testing against real
-hardware. Until it's confirmed to genuinely be a millisecond-scale
-timer (as the value range suggests) rather than, say, a scan-cycle
-counter with a different effective time unit, this project is holding
-off on reimplementing the mechanism in `firmware/keys.c` — the arm/
-fire/note-off state machine and the velocity formula above are both
-solid enough to implement, but getting the *time reference* wrong
-would silently miscalibrate every note's velocity, which is worse than
-the current honestly-flagged simplification (a keypress currently
-emits the same note twice via `firmware/keys.c`'s independent per-bit
-edge detection, rather than one velocity-scaled event).
+**Resolved (with live Ghidra access, in a follow-up pass): what
+increments `*(short*)(DAT_08004c04+4)` — and a correction to this
+document's earlier claim about SysTick.**
+
+Manually walking the disassembly at the two writer addresses
+(`0x08006108`, `0x0800610e`, which fall in a gap in Ghidra's
+auto-analysis — no function boundary defined there, `arm-none-eabi-
+objdump` used instead) shows a plain 16-bit wraparound increment:
+`if (counter == 0xFFFF) counter = 0; counter++;`, executed once per
+call to the function containing it. That function is reached only by
+an internal jump, not a `bl` call, so it's part of a larger function
+whose own entry wasn't pinned down — but critically, **it is not
+called from the SysTick interrupt**: the SysTick vector table entry
+(flash offset `0x3C`) resolves to `0x080018F4`, and disassembling that
+address directly shows a single instruction — `bx lr`. **`SysTick_Handler`
+is a no-op stub**, identical in shape to every other unused exception
+vector in this firmware.
+
+This corrects an earlier claim in this document's ADC section ("no
+evidence the original uses SysTick or any timer at all") — it's more
+precise to say: **the original *configures* SysTick hardware** (traced
+separately: `SysTick->LOAD = SYSCLK/16000`, `TICKINT` and `ENABLE` set)
+**but its interrupt handler does nothing**, and the counter this section
+is about is driven by plain call-frequency, not the SysTick hardware at
+all. Two different, unrelated timer-adjacent facts were easy to
+conflate; both are now stated precisely. Why the original bothers
+configuring SysTick hardware it never acts on isn't resolved — possibly
+vestigial, possibly polled via `SysTick->VAL`/`COUNTFLAG` somewhere this
+pass didn't find.
+
+**Practical implication for `firmware/keys.c`**: the reference this
+project was waiting to confirm is a **main-loop call-rate counter, not
+a calibrated wall-clock timer** — so `systick.c`'s real millisecond
+timebase would in fact have been the *wrong* thing to hook this up to.
+`keys.c` now implements the full dual-switch mechanism using an
+equivalent free-running counter (incremented once per `keys_process()`
+call, matching the original's category of timing source exactly, even
+though the absolute calibration will differ from the original's actual
+main-loop rate).

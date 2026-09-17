@@ -16,19 +16,22 @@ land.
   hardware-wiring fact about this specific board, not creative content.
 - **MIDI ring buffer** (`src/midi_ring.c`): standard circular buffer,
   matching the original's confirmed 240-byte design.
-- **Key edge detection → Note On/Off** (`src/keys.c`): diffs
-  `matrix_state[]` against the previous scan and pushes MIDI events for
-  every transition. **This is the intended mirror tap point for the
-  ESP32-C3 BLE MIDI project** — see the TODO comment in `send_note()` in
-  `keys.c`. The physical (column, row-bit) → key index mapping
-  (`key_index_table` in `keys.c`) is now **confirmed**, not a placeholder
-  — disassembling the original directly against the verified firmware
-  binary found the real indexing formula and the 28-byte lookup table it
-  reads, both reproduced exactly. One known simplification remains: the
-  original pairs two row-bits per key (likely genuine dual-switch
-  velocity sensing) and this module doesn't yet reimplement that, so a
-  keypress may emit two Note On events instead of one velocity-scaled
-  one — see `keys.c`'s header comment.
+- **Key edge detection → velocity-sensed Note On/Off** (`src/keys.c`):
+  the physical (column, row-bit) → key index mapping is **confirmed**
+  (the real indexing formula and its 28-byte lookup table, reproduced
+  exactly from the verified firmware binary). The original's dual-
+  switch velocity-sensing mechanism is also now fully implemented — a
+  3-state per-key machine (idle/armed/fired) driven by the row-bit pair
+  sharing each key index, with velocity computed as `127 -
+  clamp(delta, 0, 126)` (confirmed a plain linear inversion, not a
+  curve). **This is the intended mirror tap point for the ESP32-C3 BLE
+  MIDI project** — see the TODO comment in `send_note()`. One caveat:
+  the delta is clocked against a free-running counter incremented once
+  per `keys_process()` call, matching the original's own timing
+  *category* (confirmed to be a call-rate counter, not the SysTick
+  hardware — see `keys.c`'s header) but not independently calibrated to
+  real time, since this firmware's main-loop rate isn't guaranteed to
+  match the original's.
 - **USB descriptors** (`src/usb_descriptors.c`): byte-verified against the
   real device, needed for class-compliant enumeration.
 - **USB device stack** (`src/usb.c`): minimal STM32F1 USB peripheral
@@ -51,12 +54,12 @@ land.
   boilerplate, the same shape as any STM32F1 project.
 - **Millisecond timebase** (`src/systick.c`): standard Cortex-M3 SysTick
   setup, 1ms ticks off the 48 MHz SYSCLK. Not derived from the
-  original's disassembly — `FIRMWARE_ANALYSIS.md` found no evidence the
-  original uses SysTick or any timer at all (its apparent all-polling
-  main-loop architecture doesn't need one). Gives this firmware its
-  first real wall-clock reference, now used by `stuck_note.c`'s timeout
-  and `arp.c`'s step rate (both previously uncalibrated main-loop-
-  iteration counts).
+  original's disassembly — the original *does* configure SysTick
+  hardware, but its handler is a confirmed no-op stub, so whatever it's
+  for isn't interrupt-driven timekeeping (see `FIRMWARE_ANALYSIS.md`'s
+  dual-switch key velocity section). Gives this firmware its first real
+  wall-clock reference, used by `stuck_note.c`'s timeout and `arp.c`'s
+  step rate.
 
 - **Knob → MIDI CC** (`src/adc.c`, `src/knobs.c`): ADC1 in continuous
   scan mode over 16 channels, DMA1 channel 1 keeping `adc_raw[]` fresh
@@ -124,18 +127,6 @@ land.
 
 ## What's stubbed / not yet implemented
 
-- **Dual-switch key velocity sensing** — the key-index mapping and the
-  velocity formula (`127 - clamp(delta, 0, 126)`, a plain linear
-  inversion, not a curve) are both confirmed now (see
-  `FIRMWARE_ANALYSIS.md`'s "Follow-up: the dual-switch mechanism in
-  full" section), but the *time reference* the original clocks that
-  delta against couldn't be confirmed as genuinely millisecond-scale
-  this pass (its update site fell in a gap in the current Ghidra
-  analysis). Deliberately not implemented until that's resolved —
-  getting it wrong would silently miscalibrate every note's velocity,
-  worse than the current honestly-flagged simplification (`keys.c`
-  still emits the same note twice per keypress instead of one
-  velocity-scaled event).
 - **Knob and pad ADC-channel mappings** (see caveats above).
 - **SysEx editor protocol commands `` ` `` (raw dump capture), `d` and
   `j` (device identification/bootstrap)** — not implemented (see

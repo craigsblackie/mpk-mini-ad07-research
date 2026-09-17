@@ -7,11 +7,13 @@
  * SysTick-based millisecond timebase.
  *
  * Standard Cortex-M3 SysTick usage (not derived from the original
- * firmware's disassembly -- FIRMWARE_ANALYSIS.md found no evidence the
- * original uses SysTick at all, or any timer peripheral; its apparent
- * all-polling main-loop architecture doesn't need one). This gives
- * this replacement firmware a real wall-clock reference, replacing the
- * main-loop-iteration-counting placeholders previously used by
+ * firmware's disassembly -- a later pass found the original *does*
+ * configure SysTick hardware (LOAD/TICKINT/ENABLE all set), but its
+ * SysTick_Handler is a no-op stub, `bx lr`; whatever the original uses
+ * it for, it isn't interrupt-driven timekeeping -- see
+ * FIRMWARE_ANALYSIS.md's dual-switch key velocity follow-up section
+ * for the full story of tracking this down). This gives this
+ * replacement firmware a real wall-clock reference, used by
  * stuck_note.c's timeout and arp.c's step rate.
  */
 void systick_init(void);
