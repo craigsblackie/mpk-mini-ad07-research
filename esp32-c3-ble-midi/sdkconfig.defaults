@@ -17,6 +17,19 @@ CONFIG_BT_NIMBLE_NVS_PERSIST=y
 # Headroom for aggregated notifications; the default 12 blocks is tight when a
 # SysEx dump and live playing overlap.
 CONFIG_BT_NIMBLE_MSYS1_BLOCK_COUNT=24
+# WiFi is used only by the on-demand editor portal (see editor.c). It
+# shares the one 2.4 GHz radio with BLE, so software coexistence must be
+# on; without it, bringing up the AP disrupts the MIDI link.
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
+# The editor page is served from flash and the AP carries one browser, so
+# trim the default buffer counts back toward what that actually needs.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16
+CONFIG_LWIP_MAX_SOCKETS=8
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y

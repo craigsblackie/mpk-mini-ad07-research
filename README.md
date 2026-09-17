@@ -30,6 +30,13 @@ external ESP32-C3 while preserving the original USB MIDI functionality.
   round-trip tests. It has **not** yet been bench-tested wired to the
   keyboard; the wiring and the keyboard-powered 5 V tap are derived from the
   AD07 schematic rather than from a working build.
+- **Two features the original hardware never had**: selectable velocity
+  response curves for the keys and pads (stored outside the stock program
+  record, so stock editor compatibility is untouched, and defaulting to a
+  curve that is bit-identical to stock), and a **WiFi editor hosted on the
+  ESP32 itself** -- press BOOT, join its access point, and edit programs,
+  pads, knobs, the arpeggiator and the curves in a browser. It replaces the
+  discontinued AKAI editor and needs no host software at all.
 
 ## Repo layout
 
@@ -56,9 +63,9 @@ external ESP32-C3 while preserving the original USB MIDI functionality.
 - `firmware/` — the open-source replacement firmware itself. See
   `firmware/README.md` for build instructions and exact status.
 - `esp32-c3-ble-midi/` — the ESP-IDF project for the ESP32-C3 SuperMini that
-  adds Bluetooth LE MIDI alongside USB, plus host-side round-trip tests for
-  the MIDI translation. See `esp32-c3-ble-midi/README.md` for wiring, the
-  keyboard-powered supply tap, and the bring-up order.
+  adds Bluetooth LE MIDI alongside USB and hosts the browser-based editor,
+  plus host-side tests for both. See `esp32-c3-ble-midi/README.md` for wiring,
+  the keyboard-powered supply tap, and the bring-up order.
 - `ghidra-scripts/` — headless Ghidra scripts used for the analysis:
   bulk-decompiling every function, and cross-referencing peripheral/call
   usage to map which functions do what.

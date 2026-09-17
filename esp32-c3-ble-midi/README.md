@@ -7,7 +7,9 @@ is no second cable and no battery.
 
 ## Status
 
-Built warning-free against ESP-IDF v6.0.3 for `esp32c3`. **The assembled system
+Built warning-free against ESP-IDF v6.0.3 for `esp32c3`. The app is 1.2 MB, so
+`partitions.csv` gives it a 2 MB slot -- the default 1 MB layout cannot hold
+BLE and WiFi together. **The assembled system
 has not been bench-tested against the keyboard yet** — the wiring, the power
 tap and the end-to-end MIDI path below are derived from the AD07 service
 schematic and the firmware sources, not from a working unit. Work through
@@ -131,12 +133,23 @@ cd esp32-c3-ble-midi/test
 make check
 ```
 
-Fifteen cases, run under AddressSanitizer and UBSan: channel messages, running
-status expansion, realtime interleaved mid-message, inline and fragmented
-SysEx, SysEx ordered against surrounding notes, a 100-message burst, retry
-under simulated controller buffer exhaustion, timestamp rollover and
-timestamp-high packet splitting, discard while unsubscribed, overlong SysEx
-recovery, and rejection of malformed inbound packets.
+Forty-eight cases across two suites, run under AddressSanitizer and UBSan.
+
+The BLE suite covers channel messages, running status expansion, realtime
+interleaved mid-message, inline and fragmented SysEx, SysEx ordered against
+surrounding notes, a 100-message burst, retry under simulated controller
+buffer exhaustion, timestamp rollover and timestamp-high packet splitting,
+discard while unsubscribed, overlong SysEx recovery, and rejection of
+malformed inbound packets.
+
+The editor suite drives the HTTP handlers against a fake keyboard that answers
+`'c'`, `'a'`, `'v'` and `'d'` the way the real one does: program decode,
+read-modify-write, tempo clamping, rejection of a bad program index, a timeout
+surfacing as an error rather than a fabricated success, settings round trip,
+and a check that every byte the bridge puts on the wire is 7-bit safe. It also
+compares `editor.c`'s copy of the firmware's wire-reorder table against
+`firmware/src/program.c` byte for byte, so the two cannot drift apart
+unnoticed.
 
 This covers the protocol, not the wiring, the power tap, or the UART link.
 
@@ -195,11 +208,52 @@ a board that wires it elsewhere.
 | One short blink per second | Advertising, no host |
 | Double blink | Connected, but the host has not subscribed to notifications |
 | Solid | Connected and subscribed — MIDI will flow |
+| Fast even blink | Editor portal is up (overrides the states above) |
+
+## Editor portal
+
+The bridge already speaks the keyboard's editor SysEx, so it can host the
+editor itself. Press the SuperMini's **BOOT** button: it raises a WiFi access
+point and serves a single-page editor. No driver, no host application, and
+nothing that depends on the discontinued AKAI editor still running on a
+current OS.
+
+| | |
+|---|---|
+| Network | `MPK-mini-Open` |
+| Password | `mpkmini1` |
+| Address | `http://192.168.4.1/` |
+
+Press BOOT again to shut the portal down. It is **off by default and not
+persistent** -- it never comes up on its own, because an idle AP would share
+the one 2.4 GHz antenna with BLE for no benefit and would roughly double the
+bridge's draw on a supply taken from the keyboard's USB rail. BLE MIDI keeps
+working while the portal is up; software coexistence is enabled for exactly
+this overlap.
+
+The editor covers the MIDI and pad channels, octave and transpose, the full
+arpeggiator page, all eight pads across both banks (note, CC, program change,
+toggle), all eight knobs (CC, low, high), and the velocity curves, with a live
+graph of the key and pad response against the linear reference.
+
+Two behaviours worth knowing. A save is **read-modify-write**: the page sends
+only what changed, the bridge re-reads the program first, so nothing you did
+not touch is disturbed. And a save is **confirmed, not assumed** -- the bridge
+reads the program back and compares it before reporting success, so a failed
+write surfaces as an error instead of a silent no-op.
+
+Change the network name or password in `main/editor.c` (`AP_SSID`,
+`AP_PASSWORD`; WPA2 needs at least 8 characters). The portal is a local AP
+with no route to the internet, but anyone in range with the password can
+change your programs -- treat it as you would any other open panel on the
+instrument.
 
 ## Protocol and behaviour
 
 - BLE service `03B80E5A-EDE8-4B33-A751-6CE34EC4C700`, MIDI characteristic
   `7772E5DB-3868-4112-A1A9-F2669D106BF3`.
+- Editor SysEx: the stock `'a'`/`'b'`/`'c'`/`'d'` commands, plus `'v'` for the
+  velocity curves, which the open firmware adds (see `../firmware/README.md`).
 - UART: 31250 baud, 8N1, GPIO4 RX, GPIO5 TX.
 - Channel messages, running status, MIDI realtime and fragmented SysEx all
   cross in both directions. Running status from the keyboard is expanded to

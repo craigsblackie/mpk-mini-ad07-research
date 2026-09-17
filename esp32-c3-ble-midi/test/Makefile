@@ -1,21 +1,34 @@
-# Host-side round-trip tests for the BLE-MIDI translation logic.
+# Host-side tests for the bridge. Both suites compile the real firmware
+# sources against the stub ESP-IDF/NimBLE headers in stub/ -- no hardware,
+# no ESP-IDF install needed.
 #
-# main.c is compiled against the stub headers in stub/, which provide just
-# enough of ESP-IDF and NimBLE to link. Outbound MIDI is pushed through the
-# parser, the outbound queue and the packet builder, then every resulting
-# notification is fed back through the inbound decoder; the recovered byte
-# stream must match what went in.
+#   test        BLE-MIDI translation: encode a stream, decode it back,
+#               assert the recovered bytes match what went in.
+#   editor_test the editor's SysEx translation, driven against a fake
+#               keyboard that answers 'c'/'a'/'v'/'d' like the real one.
+#               Also checks editor.c's copy of the firmware's wire-reorder
+#               table against firmware/src/program.c, byte for byte.
 
 CFLAGS = -std=gnu11 -Wall -Wextra -g -fsanitize=address,undefined \
-         -Wno-unused-parameter -Wno-unused-variable -Istub -I../main
+         -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function \
+         -Istub -I../main
+FIRMWARE_PROGRAM_C = ../../firmware/src/program.c
 
-test: test.c ../main/main.c $(wildcard stub/*.h stub/*/*.h)
+STUBS = $(wildcard stub/*.h stub/*/*.h stub/*/*/*.h)
+
+test: test.c ../main/main.c $(STUBS)
 	$(CC) $(CFLAGS) test.c -o $@
 
-check: test
+editor_test: editor_test.c ../main/editor.c ../main/sysex_bridge.h $(STUBS)
+	$(CC) $(CFLAGS) -DEDITOR_HOST_TEST \
+	  -DFIRMWARE_PROGRAM_C='"$(FIRMWARE_PROGRAM_C)"' editor_test.c -o $@
+
+check: test editor_test
 	./test
+	@echo
+	./editor_test
 
 clean:
-	rm -f test
+	rm -f test editor_test
 
 .PHONY: check clean

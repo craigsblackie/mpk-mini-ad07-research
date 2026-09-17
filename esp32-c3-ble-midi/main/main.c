@@ -28,8 +28,10 @@
 #include "host/ble_uuid.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
+#include "editor.h"
 #include "nvs_flash.h"
 #include "services/gap/ble_svc_gap.h"
+#include "sysex_bridge.h"
 #include "services/gatt/ble_svc_gatt.h"
 #include "store/config/ble_store_config.h"
 
@@ -52,6 +54,11 @@ void ble_store_config_init(void);
 #define STATUS_LED_GPIO        8
 #define STATUS_LED_ACTIVE_LOW  1
 #define STATUS_LED_PERIOD_MS   100
+
+/* BOOT button, also GPIO9's strapping duty -- only read long after boot.
+ * A press toggles the WiFi editor portal (see editor.c). */
+#define EDITOR_BUTTON_GPIO   9
+#define EDITOR_BUTTON_STABLE 3        /* x50 ms of agreement before acting */
 
 /* Preferred ATT MTU is 256, so a notification never needs more than that. */
 #define BLE_PACKET_CAPACITY 256u
@@ -386,6 +393,9 @@ static void uart_parser_byte(midi_parser_t *parser, uint8_t byte)
 			return;
 		}
 		if (byte == 0xf7u) {
+			/* The editor taps the stream; it never consumes it, so a
+			 * reply the browser asked for still reaches the BLE host. */
+			sysex_bridge_offer(parser->sysex, parser->sysex_len);
 			out_push(parser->sysex, parser->sysex_len);
 			parser->sysex_len = 0;
 			parser->in_sysex = false;
@@ -443,6 +453,12 @@ static void uart_parser_byte(midi_parser_t *parser, uint8_t byte)
 static void uart_write_midi(const uint8_t *bytes, size_t len)
 {
 	if (len != 0) uart_write_bytes(MIDI_UART, bytes, len);
+}
+
+/* Used by sysex_bridge.c, which owns request/response but not the UART. */
+void midi_uart_send(const uint8_t *bytes, size_t len)
+{
+	uart_write_midi(bytes, len);
 }
 
 /* A continued SysEx packet begins with the BLE header and then a MIDI data
@@ -737,8 +753,10 @@ static void midi_uart_init(void)
 }
 
 #if STATUS_LED_ENABLE
-/* Solid = host subscribed, double blink = linked but not subscribed,
- * single blink per second = advertising. */
+/* Fast even blink = editor portal up (it overrides the BLE states, being
+ * the transient mode you deliberately switched on). Otherwise: solid =
+ * host subscribed, double blink = linked but not subscribed, single blink
+ * per second = advertising. */
 static void status_led_tick(void *arg)
 {
 	(void)arg;
@@ -746,7 +764,9 @@ static void status_led_tick(void *arg)
 	phase = (uint8_t)((phase + 1u) % 10u);
 
 	bool on;
-	if (ble_midi_ready())
+	if (editor_active())
+		on = (phase % 2u) == 0u;
+	else if (ble_midi_ready())
 		on = true;
 	else if (connection_handle != INVALID_HANDLE)
 		on = phase < 2u || (phase >= 4u && phase < 6u);
@@ -782,6 +802,44 @@ static void status_led_init(void)
 static void status_led_init(void) {}
 #endif
 
+/*
+ * BOOT button watcher. The button is also GPIO9's boot strapping pin, but
+ * the ROM samples that at reset and this task starts long afterwards, so
+ * reading it here is safe. Debounced by requiring several agreeing samples
+ * rather than a timer, since nothing else depends on the latency.
+ */
+static void editor_button_task(void *param)
+{
+	(void)param;
+	gpio_config_t config = {
+		.pin_bit_mask = 1ULL << EDITOR_BUTTON_GPIO,
+		.mode = GPIO_MODE_INPUT,
+		.pull_up_en = GPIO_PULLUP_ENABLE,
+		.pull_down_en = GPIO_PULLDOWN_DISABLE,
+		.intr_type = GPIO_INTR_DISABLE,
+	};
+	ESP_ERROR_CHECK(gpio_config(&config));
+
+	bool pressed = false;
+	uint8_t agree = 0;
+	while (true) {
+		vTaskDelay(pdMS_TO_TICKS(50));
+		bool now = gpio_get_level(EDITOR_BUTTON_GPIO) == 0; /* active low */
+		if (now == pressed) {
+			agree = 0;
+			continue;
+		}
+		if (++agree < EDITOR_BUTTON_STABLE) continue;
+		agree = 0;
+		pressed = now;
+		if (pressed) {
+			ESP_LOGI(TAG, "BOOT pressed: %s editor portal",
+			         editor_active() ? "stopping" : "starting");
+			editor_toggle();
+		}
+	}
+}
+
 void app_main(void)
 {
 	esp_err_t err = nvs_flash_init();
@@ -792,7 +850,9 @@ void app_main(void)
 	ESP_ERROR_CHECK(err);
 
 	status_led_init();
+	editor_init();
 	midi_uart_init();
+	xTaskCreate(editor_button_task, "editor-btn", 3072, NULL, 4, NULL);
 	ESP_ERROR_CHECK(nimble_port_init());
 
 	ble_hs_cfg.reset_cb = ble_on_reset;

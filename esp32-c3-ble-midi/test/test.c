@@ -1,11 +1,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 int log_warn_count;
 int64_t fake_us;
 int delay_calls;
+
+/* main.c taps completed SysEx for the editor and asks whether the portal
+ * is up when painting the LED. Neither is under test here -- the editor
+ * has its own suite -- so these stand in. */
+bool sysex_bridge_offer(const uint8_t *message, size_t len) { (void)message; (void)len; return false; }
+void editor_init(void) {}
+void editor_toggle(void) {}
+bool editor_active(void) { return false; }
 
 /* ---- capture of what the bridge decodes back onto the UART ---- */
 static uint8_t uart_out[65536];
