@@ -99,15 +99,17 @@ land.
   three confirmed pad output modes (Note/CC/Program Change), not just
   Note. Same caveat as knobs: which physical pad is which specific
   channel within 8-15 isn't confirmed.
-- **Matrix column 7: sustain pedal, real octave buttons, tap tempo**
-  (`src/transport.c`, new): a second, previously under-characterized
-  button cluster, fully traced this session (`FUN_08006988`). Sustain
-  sends standard MIDI CC 64 on press/release (unambiguous). The octave
-  buttons directly adjust `record+0x02` (clamped 0-8, hold-both-to-
-  reset-to-4), which cross-references cleanly against `keys.c`'s note
-  formula — these are now believed to be the **real** octave up/down
-  control, correcting this project's earlier guess (see next entry).
-  Tap tempo feeds `arp.c`'s `arp_tap()`.
+- **Matrix column 7: sustain pedal, real octave buttons, arp toggle,
+  tap tempo** (`src/transport.c`, new): a second, previously under-
+  characterized button cluster, fully traced this session
+  (`FUN_08006988`). Sustain sends standard MIDI CC 64 on press/release
+  (unambiguous). The octave buttons directly adjust `record+0x02`
+  (clamped 0-8, hold-both-to-reset-to-4), which cross-references
+  cleanly against `keys.c`'s note formula — these are now believed to
+  be the **real** octave up/down control, correcting this project's
+  earlier guess (see next entry). A third button does a literal
+  `record[4] = (record[4] == 0)` on release — an unambiguous **arp
+  on/off toggle**. Tap tempo feeds `arp.c`'s `arp_tap()`.
 - **Matrix column 8 buttons** (`src/buttons.c`): still implemented (the
   input-reading mechanism is confirmed real — matrix column 8), but no
   longer believed to be octave buttons, and no longer wired into note
@@ -183,9 +185,10 @@ land.
   8-channel group** (see caveats above) — the channel *ranges* are
   schematic-confirmed, the *order within* them isn't.
 - **Matrix column 8's real purpose** — reopened, see `buttons.c`.
-- **Matrix column 7 bits 0 and 3** — interact with arp-hold-array reset
-  logic in the original, not resolved with enough confidence to
-  reimplement (see `transport.c`'s header).
+- **Matrix column 7 bit 3** — entangled with arp-hold-array reset logic
+  in the original, not resolved with enough confidence to reimplement
+  (see `transport.c`'s header). Bit 0 (arp toggle) and bit 1 (tap
+  tempo) *are* implemented.
 - **SysEx editor protocol commands `` ` `` (raw dump capture) and `j`
   (device identification/bootstrap/factory-reset)** — not implemented
   (see `sysex.c`'s header for why). `a`, `b`, `c`, and `d` *are*

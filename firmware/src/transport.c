@@ -33,15 +33,27 @@
  *   `arp_tap()`: this project's version uses the single most recent
  *   tap interval directly rather than an N-tap rolling average --
  *   same feature, simpler math, not a byte-exact port.
- * - **Bit 0** (mask 0x01) and further bit-3 (mask 0x08) logic exists
- *   in the original around arp-hold-array resets but wasn't resolved
- *   with enough confidence to reimplement -- not wired up here.
+ * - **Bit 0** (mask 0x01): on release (transitioning away from a
+ *   lone bit-0 press), the original does a literal `record[4] =
+ *   (record[4] == 0)` -- an unconditional boolean flip of the arp
+ *   on/off flag. Unambiguous: this is the **arp on/off toggle
+ *   button**. Reimplemented as a simple edge-triggered toggle (the
+ *   original's exact-equality-to-1 test on the whole byte, rather than
+ *   a plain bitmask test, suggests its button codes may not be a true
+ *   simultaneous bitmask -- not reproduced exactly, since a bit-based
+ *   edge test is a faithful enough reimplementation of "press this
+ *   button to toggle the arp").
+ * - **Bit 3** (mask 0x08): entangled with the original's stuck-note-
+ *   style cleanup array and several local state flags in a way this
+ *   project couldn't resolve to a clean, confident feature description
+ *   -- not reimplemented.
  */
 #include "transport.h"
 #include "midi_ring.h"
 #include "program.h"
 #include "arp.h"
 
+#define BIT_ARP_TOGGLE (1u << 0)
 #define BIT_TAP (1u << 1)
 #define BIT_SUSTAIN (1u << 2)
 #define BIT_OCTAVE_DOWN (1u << 4)
@@ -69,6 +81,11 @@ void transport_process(uint8_t status_byte)
 {
 	uint8_t changed = status_byte ^ previous_status;
 	previous_status = status_byte;
+
+	if ((changed & BIT_ARP_TOGGLE) && !(status_byte & BIT_ARP_TOGGLE)) {
+		/* Original toggles on release, not press. */
+		program_toggle_arp_enabled();
+	}
 
 	if (changed & BIT_SUSTAIN) {
 		send_sustain((status_byte & BIT_SUSTAIN) != 0);

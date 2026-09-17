@@ -112,6 +112,12 @@ uint8_t program_arp_enabled(void)
 	return programs[current_program].raw[OFF_ARP_ENABLED] != 0;
 }
 
+void program_toggle_arp_enabled(void)
+{
+	uint8_t *flag = &programs[current_program].raw[OFF_ARP_ENABLED];
+	*flag = (*flag == 0) ? 1 : 0;
+}
+
 uint8_t program_arp_clock_div(void)
 {
 	uint8_t d = programs[current_program].raw[OFF_ARP_CLOCK_DIV];

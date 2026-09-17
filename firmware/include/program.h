@@ -53,6 +53,9 @@ uint8_t program_channel(void);
  * confirmed via that same function's per-pass-completion increment
  * adding `range_pass * 12` semitones to the note before sending). */
 uint8_t program_arp_enabled(void);
+/* Confirmed a real button toggles this directly (FUN_08006988 bit 0,
+ * a literal `flag = (flag == 0)` boolean flip) -- see transport.c. */
+void program_toggle_arp_enabled(void);
 uint8_t program_arp_clock_div(void);
 uint16_t program_tempo_bpm(void);
 uint8_t program_arp_mode(void);

@@ -1154,9 +1154,14 @@ one per extra column.
   default 3 — plausibly the required tap count, though this project
   didn't independently verify that specific role), averages them into
   a tempo value clamped to 250-2000ms per interval.
-- **Bits 0 and 3 (`0x01`, `0x08`)**: interact with the arp-hold array
-  reset logic seen elsewhere in this document, but weren't resolved
-  with enough confidence to characterize further this pass.
+- **Bit 0 (`0x01`)**: on release, the original does a literal
+  `record[4] = (record[4] == 0)` — an unconditional boolean flip of the
+  arp on/off flag. Unambiguous: this is the **arp on/off toggle
+  button**.
+- **Bit 3 (`0x08`)**: entangled with the arp-hold array reset logic
+  seen elsewhere in this document and several local state flags, in a
+  way this project couldn't resolve to a clean, confident feature
+  description this pass.
 
 **This corrects this document's earlier octave-buttons section**
 (and `firmware/buttons.c`'s implementation built on it): the
@@ -1169,9 +1174,11 @@ cross-confirmed against the actual note-computation formula. Column
 8's real purpose is reopened — see `buttons.c`'s updated header.
 
 **Implemented in `firmware/`**: `program.c` gained `program_octave()`/
-`program_fine_transpose()`/`program_set_octave()` (record+0x02/0x03),
-`keys.c`'s note formula now uses them directly (replacing an earlier
+`program_fine_transpose()`/`program_set_octave()` (record+0x02/0x03)
+and `program_toggle_arp_enabled()`, `keys.c`'s note formula now uses
+the octave/transpose accessors directly (replacing an earlier
 self-invented placeholder formula), `transport.c` implements column
-7's sustain pedal, octave buttons, and tap-tempo trigger, and
-`arp.c` gained `arp_tap()` (a simplified single-interval tap tempo,
-not the original's N-tap rolling average, but the same real feature).
+7's sustain pedal, octave buttons, arp on/off toggle, and tap-tempo
+trigger, and `arp.c` gained `arp_tap()` (a simplified single-interval
+tap tempo, not the original's N-tap rolling average, but the same
+real feature).
