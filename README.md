@@ -18,12 +18,18 @@ external ESP32-C3 while preserving the original USB MIDI functionality.
   ARM:LE:32:Cortex) — see `FIRMWARE_ANALYSIS.md` for documented findings
   (raw decompiler output itself is not published here — see "What's not in
   this repo").
-- **An open-source replacement firmware has been started** (`firmware/`) —
-  compiles cleanly as of this writing (`-Wall -Wextra`, zero warnings),
-  with the matrix scanner, MIDI ring buffer, USB device stack, keys, pads,
-  knobs, octave buttons, and a stuck-note safety net implemented, plus a
-  standalone arpeggiator skeleton. Not yet feature-complete or
-  hardware-tested — see `firmware/README.md` for exact status.
+- **An open-source replacement application is running on real hardware**
+  (`firmware/`) with the exact original updater retained. USB MIDI, editor
+  SysEx, persistent programs, velocity keys/pads, knobs, transport controls,
+  all arp modes, and the original pad/status LED behavior are implemented.
+  Stock/open protocol replies have been compared byte-for-byte on the AD07
+  board. See `firmware/README.md` for the test scope and safe app-slot
+  flashing instructions.
+- **BLE MIDI firmware for the ESP32-C3 is complete and builds warning-free**
+  (`esp32-c3-ble-midi/`), with the MIDI translation covered by host-side
+  round-trip tests. It has **not** yet been bench-tested wired to the
+  keyboard; the wiring and the keyboard-powered 5 V tap are derived from the
+  AD07 schematic rather than from a working build.
 
 ## Repo layout
 
@@ -49,6 +55,10 @@ external ESP32-C3 while preserving the original USB MIDI functionality.
   original prose cross-checked against raw binary bytes.
 - `firmware/` — the open-source replacement firmware itself. See
   `firmware/README.md` for build instructions and exact status.
+- `esp32-c3-ble-midi/` — the ESP-IDF project for the ESP32-C3 SuperMini that
+  adds Bluetooth LE MIDI alongside USB, plus host-side round-trip tests for
+  the MIDI translation. See `esp32-c3-ble-midi/README.md` for wiring, the
+  keyboard-powered supply tap, and the bring-up order.
 - `ghidra-scripts/` — headless Ghidra scripts used for the analysis:
   bulk-decompiling every function, and cross-referencing peripheral/call
   usage to map which functions do what.
