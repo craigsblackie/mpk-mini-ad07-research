@@ -26,11 +26,12 @@
 #define OFF_UNKNOWN_2 0x02 /* confirmed factory default 4; meaning unidentified */
 #define OFF_UNKNOWN_3 0x03 /* confirmed factory default 12; meaning unidentified */
 #define OFF_ARP_ENABLED 0x04
-#define OFF_UNKNOWN_5 0x05 /* confirmed factory default 1; meaning unidentified */
+#define OFF_ARP_MODE 0x05 /* confirmed via FUN_08002588's switch -- see program.h */
 #define OFF_ARP_CLOCK_DIV 0x06
 #define OFF_UNKNOWN_9 0x09 /* confirmed factory default 3; meaning unidentified */
 #define OFF_TEMPO_LOW 0x0a
 #define OFF_TEMPO_HIGH 0x0b
+#define OFF_ARP_RANGE 0x0c /* confirmed via FUN_08002588 -- see program.h */
 #define OFF_PAD_BASE 0x0d
 #define PAD_STRIDE 8
 #define OFF_PAD_NOTE 0x0
@@ -53,12 +54,13 @@ static void init_one(program_record_t *p, uint8_t base_cc)
 	p->raw[OFF_UNKNOWN_2] = 4;
 	p->raw[OFF_UNKNOWN_3] = 12;
 	p->raw[OFF_ARP_ENABLED] = 0;
-	p->raw[OFF_UNKNOWN_5] = 1;
+	p->raw[OFF_ARP_MODE] = 1; /* confirmed factory default -- DOWN, see program.h */
 	p->raw[OFF_ARP_CLOCK_DIV] = 5;
 	p->raw[OFF_UNKNOWN_9] = 3;
 	/* Tempo = byte[0xb] + byte[0xa]*0x80 = 120 -> byte[0xa]=0, byte[0xb]=120 */
 	p->raw[OFF_TEMPO_LOW] = 0;
 	p->raw[OFF_TEMPO_HIGH] = 120;
+	p->raw[OFF_ARP_RANGE] = 0; /* confirmed factory default -- no octave repeat */
 
 	for (int k = 0; k < 8; k++) {
 		p->raw[OFF_KNOB_BASE + k * KNOB_STRIDE + OFF_KNOB_CC] = (uint8_t)(base_cc + k);
@@ -95,6 +97,18 @@ uint8_t program_arp_clock_div(void)
 {
 	uint8_t d = programs[current_program].raw[OFF_ARP_CLOCK_DIV];
 	return (uint8_t)(d & 0x07);
+}
+
+uint8_t program_arp_mode(void)
+{
+	uint8_t m = programs[current_program].raw[OFF_ARP_MODE];
+	return (uint8_t)(m > 5 ? 5 : m);
+}
+
+uint8_t program_arp_range(void)
+{
+	uint8_t r = programs[current_program].raw[OFF_ARP_RANGE];
+	return (uint8_t)(r > 3 ? 3 : r);
 }
 
 uint16_t program_tempo_bpm(void)

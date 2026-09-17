@@ -124,14 +124,19 @@ land.
   (the encode/decode tables are checked to be exact inverse
   permutations, and the packer matches the original's own algorithm)
   but not against a real captured dump from the official editor.
-- **Arpeggiator** (`src/arp.c`): steps ascending-only ("up" mode) through
-  currently-held notes, gated on the program record's real arp on/off
-  flag and rate-scaled by its clock-division and tempo fields, now with
-  genuinely calibrated real-time step timing via `systick.c` (a step at
-  120 BPM with the default clock division is exactly 500ms — a standard
-  "1/4 note" arp rate). Still partial: range, direction mode, gate
-  length, and latch parameters aren't decoded. Still not wired to
-  key/pad input.
+- **Arpeggiator** (`src/arp.c`): all 6 confirmed direction modes are
+  implemented — Up, Down (the confirmed factory default), Up-Down,
+  Down-Up, Random (using the original's own confirmed RNG constants),
+  and a 6th mode reimplemented the same as Up pending more confidence
+  in what distinguishes it — plus 0-3 octave range repeats, all read
+  from the program record (previously undecoded fields, now resolved —
+  see `FIRMWARE_ANALYSIS.md`'s "Arpeggiator engine fully traced"
+  section). Gated on the program's real arp on/off flag and rate-scaled
+  by its clock-division and tempo fields, with genuinely calibrated
+  real-time step timing via `systick.c` (a step at 120 BPM with the
+  default clock division is exactly 500ms — a standard "1/4 note" arp
+  rate). Still partial: gate length and latch parameters aren't
+  decoded. Still not wired to key/pad input.
 
 ## What's stubbed / not yet implemented
 

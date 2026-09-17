@@ -1027,3 +1027,49 @@ that's never read back out within the same call — likely dead/unused
 in practice, or part of a multi-message flow this project hasn't
 traced) and the `0x5a` sub-case of `'j'` (echoes back a single
 hardware-status byte from a source not identified).
+
+## Arpeggiator engine fully traced — direction modes and octave range confirmed
+
+`FUN_08002588` (previously "likely the arpeggiator step sequencer,"
+medium confidence, only partially read) was read in full with live
+Ghidra access. It's a substantially larger function than the earlier
+pass suggested — a complete arp engine, not just a step counter. Two
+concrete new findings, both directly resolving fields this document
+had previously flagged as "unidentified":
+
+- **`record+0x05` is the arp direction mode (0-5)**, selected by a
+  `switch(*(char*)(iVar16+5))` with 6 cases mapping cleanly onto
+  standard arpeggiator modes:
+  - `0`: increments a step index each call, wrapping to 0 on overflow.
+  - `1`: decrements, wrapping to `count-1` — the confirmed factory
+    default (`record+0x05` = 1, from the `'j'` bootstrap handler) is
+    **Down**, not Up.
+  - `2`, `3`: both maintain a direction-reversal flag and bounce
+    between the ends of the held-note range — Up-Down and Down-Up
+    (mirror images of each other in which end they start/turn at).
+  - `4`: uses a 16-bit linear congruential generator,
+    `x = x*0x6255 + 0x3619`, to pick a pseudo-random step each call —
+    confirmed Random mode, with the exact RNG constants.
+  - `5`: structurally identical to case `0` (Up) but bounds the step
+    index against a *different* held-note count variable
+    (`DAT_08002c98` vs. `DAT_0800299c`, used elsewhere in the function
+    for the live/current note list) — plausibly an "Order played"
+    mode using a separate insertion-order list, not independently
+    confirmed since that second variable's own population wasn't
+    traced this pass.
+- **`record+0x0c` is the arp octave range (0-3 additional passes)**.
+  Every direction-mode case increments a "pass" counter
+  (`pcVar17[0xd]`) each time a full cycle through the held notes
+  completes, wrapping it against `record+0x0c`; the note actually sent
+  is offset by `pass * 12` semitones (`uVar18 = bVar8 + pcVar17[0xd]*0xc`,
+  checked `< 0x80` before sending). Confirmed factory default 0 (no
+  extra octaves), matching this document's earlier clamp-only finding
+  (0-3, via `FUN_08005ac8`) now with a confirmed meaning attached.
+
+**Implemented in `firmware/arp.c`**: all 6 modes (5 faithfully, mode 5
+reimplemented identically to mode 0 given the residual uncertainty
+above) and the octave-range repeat, replacing the earlier fixed
+ascending-only skeleton. Gate length and latch (holding notes after
+key release) are referenced elsewhere in this function's surrounding
+logic but weren't traced closely enough this pass to implement with
+confidence — still open.

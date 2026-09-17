@@ -42,10 +42,28 @@ uint8_t program_channel(void);
 /* record+0x04: arp on/off. record+0x06: arp clock-division selector
  * (0-7), see FIRMWARE_ANALYSIS.md's confirmed tick/step table.
  * record+0x0a/+0x0b: tempo (BPM), combined per the original's own
- * validation formula. */
+ * validation formula. record+0x05: arp mode (0-5) -- confirmed via
+ * FUN_08002588's 6-case switch: 0=up, 1=down (factory default), 2=up-
+ * down, 3=down-up, 4=random (confirmed LCG, `x = x*0x6255 + 0x3619`),
+ * 5=shape-identical to up but bounded against a different held-note
+ * count (`DAT_08002c98` vs. `DAT_0800299c` elsewhere in that function)
+ * -- plausibly an "order played" mode, not independently confirmed;
+ * see ARP_MODE_* below and FIRMWARE_ANALYSIS.md. record+0x0c: arp
+ * octave range (0-3 additional octave repeats above the base pass,
+ * confirmed via that same function's per-pass-completion increment
+ * adding `range_pass * 12` semitones to the note before sending). */
 uint8_t program_arp_enabled(void);
 uint8_t program_arp_clock_div(void);
 uint16_t program_tempo_bpm(void);
+uint8_t program_arp_mode(void);
+uint8_t program_arp_range(void);
+
+#define ARP_MODE_UP 0
+#define ARP_MODE_DOWN 1
+#define ARP_MODE_UP_DOWN 2
+#define ARP_MODE_DOWN_UP 3
+#define ARP_MODE_RANDOM 4
+#define ARP_MODE_ORDER 5
 
 /* record+0x4d + knob*3: knob CC number (0 = knob unassigned, per the
  * original's confirmed "gate byte doubles as CC number" behavior). */
