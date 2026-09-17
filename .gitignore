@@ -37,6 +37,14 @@ mpk-extractor-openocd-2.log
 # this repo.
 Photos-1-001.zip
 
+# AKAI's own internal service manual (confidential/NDA-marked per its
+# own distributor listing) -- ad07-schematic-page7.jpg (already in this
+# repo, low-resolution, used to extract specific documented facts) was
+# cropped from page 7 of this same document at higher resolution. Kept
+# locally only for cross-checking findings, not published -- same
+# policy as the extracted firmware/decompiler output above.
+akai.pdf
+
 # Session scratch artifacts.
 .pico_ctrl
 .pico_run.log

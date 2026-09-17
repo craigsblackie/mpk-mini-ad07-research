@@ -85,20 +85,19 @@ land.
   really does use the internal ADC + DMA for this — a search that
   initially came up empty because the peripheral addresses are stored as
   data and dereferenced at runtime, not embedded as literal instruction
-  operands. The channel *range* is now confirmed against AKAI's own
-  schematic (`ad07-schematic-page7.jpg`, this repo) — knobs really are
-  ADC0-7 — though the exact per-knob trace routing within that range
-  isn't legible at this project's scan resolution (see `adc.c`'s
-  header).
+  operands. **The full channel mapping is now confirmed** against a
+  higher-resolution copy of AKAI's own schematic — every individual
+  wire traced: `VR1`-`VR8` connect to `ADC0`-`ADC7` in plain sequential
+  order (see `adc.c`'s header). No longer a placeholder.
 - **Pad velocity sensing → MIDI Note On/Off/CC/Program Change**
   (`src/pads.c`): reimplements the confirmed shape of the original's
   pad-velocity handler — attack/release threshold hysteresis on each
   pad's ADC reading (channels 8-15, the other half of the 16-channel ADC
-  scan — also now schematic-confirmed as the right range), with the
-  original's documented velocity-scaling formula. Also reimplements all
-  three confirmed pad output modes (Note/CC/Program Change), not just
-  Note. Same caveat as knobs: which physical pad is which specific
-  channel within 8-15 isn't confirmed.
+  scan), with the original's documented velocity-scaling formula. Also
+  reimplements all three confirmed pad output modes (Note/CC/Program
+  Change), not just Note. Same as knobs: the full channel mapping is
+  confirmed — `PAD1`-`PAD8` connect to `ADC8`-`ADC15` in plain
+  sequential order.
 - **Matrix column 7: sustain pedal, real octave buttons, arp toggle,
   tap tempo** (`src/transport.c`, new): a second, previously under-
   characterized button cluster, fully traced this session
@@ -185,9 +184,6 @@ land.
 
 ## What's stubbed / not yet implemented
 
-- **Exact per-knob/per-pad ADC channel assignment within each confirmed
-  8-channel group** (see caveats above) — the channel *ranges* are
-  schematic-confirmed, the *order within* them isn't.
 - **Matrix column 8 bits 0/1** — a local flag and sentinel byte are set
   but their further effect (consumed by functions this project hasn't
   identified) isn't reimplemented. Bits 2/3 (pad mode select) *are*.

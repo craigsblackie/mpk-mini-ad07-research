@@ -1111,14 +1111,33 @@ This directly confirms the channel *ranges* this project's ADC/DMA
 finding had already inferred from the firmware side (knobs 0-7, pads
 8-15, not some other split) — two independent lines of evidence (the
 original firmware's own 16-channel scan behavior, and now AKAI's own
-schematic labels) agreeing is a good sign. **Not resolved**: the exact
-trace routing from each individual pad (PAD1-PAD8) to its specific
-channel within ADC8-15 — the schematic clearly shows non-trivial,
-crossing wire routing there, but this project's copy of the schematic
-isn't high enough resolution to read reliably pin-by-pin. Misreading
-that risks a confidently-wrong mapping, which is worse than leaving it
-an honest placeholder (numeric order, pad N = channel 8+N) — consistent
-with this project's standing policy throughout.
+schematic labels) agreeing is a good sign. At the resolution available
+at the time, the exact wire-by-wire routing within each group wasn't
+legible — resolved in a follow-up pass below.
+
+### Follow-up: full resolution, every wire traced
+
+A much higher-resolution copy of the same schematic page (extracted
+from the underlying service-manual PDF rather than a compressed JPEG
+preview — 4959×3509 vs. the 950×679 this project started with, over
+5× the linear resolution) makes the routing completely legible. Every
+individual wire traced:
+
+- **Knobs**: `VR1`→`ADC0`, `VR2`→`ADC1`, `VR3`→`ADC2`, `VR4`→`ADC3`,
+  `VR5`→`ADC4`, `VR6`→`ADC5`, `VR7`→`ADC6`, `VR8`→`ADC7`.
+- **Pads**: `PAD1`→`ADC8`, `PAD2`→`ADC9`, `PAD3`→`ADC10`,
+  `PAD4`→`ADC11`, `PAD5`→`ADC12`, `PAD6`→`ADC13`, `PAD7`→`ADC14`,
+  `PAD8`→`ADC15`.
+
+Both groups are **plain sequential order** — confirming this project's
+original placeholder assumption was correct all along. The wires do
+bend and cross at different points in the schematic (routing them
+around other components), which is what made the low-resolution copy
+look ambiguous; the actual net connectivity was never actually
+crossed. This closes the last "needs real hardware" item entirely —
+`firmware/adc.c`, `knobs.c`, and `pads.c` now document this mapping as
+confirmed rather than placeholder, with no code changes needed (the
+existing sequential indexing was already correct).
 
 ## Major correction: column 7 is a second button cluster — sustain, real octave buttons, tap tempo
 

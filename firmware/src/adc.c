@@ -12,31 +12,25 @@
  * available every loop iteration), simpler control flow -- written
  * fresh, not copied from the disassembly.
  *
- * CONFIRMED (previously a placeholder): the channel ranges. AKAI's own
- * schematic (this project's `ad07-schematic-page7.jpg`, page "AD07_MPK8
- * V0.03") labels the knob connector's pins ADC0-ADC7 (one per
- * potentiometer, VR1-VR8 in wiring order) and the pad connector's pins
- * ADC8-ADC15 -- matching this driver's channel layout exactly (0-7
- * knobs, 8-15 pads) via the standard STM32F1 ADC12_IN0-15 GPIO mapping
- * (PA0-7 for 0-7, PB0-1 + PC0-5 for 8-15 -- pins not otherwise used by
- * the key/pad matrix scanner in matrix.c, which owns PB8-15/PC7-15).
+ * CONFIRMED (previously a placeholder): the full channel mapping, both
+ * the ranges and the exact wiring within each group. AKAI's own
+ * schematic (page 7 of the AD07 service manual, "AD07_MPK8 V0.03")
+ * labels the knob connector's pins ADC0-ADC7 and the pad connectors'
+ * pins ADC8-ADC15; reading a higher-resolution copy of that same page
+ * traces every individual wire -- VR1..VR8 connect to ADC0..ADC7 and
+ * PAD1..PAD8 connect to ADC8..ADC15, both in plain sequential order
+ * (the wires bend at different points for PCB routing reasons, but
+ * every one lands on the numerically-corresponding channel; an earlier
+ * pass of this project, working from a lower-resolution copy, could
+ * only confirm the two 8-channel *ranges*, not this exact ordering).
+ * This matches the standard STM32F1 ADC12_IN0-15 GPIO mapping (PA0-7
+ * for 0-7, PB0-1 + PC0-5 for 8-15 -- pins not otherwise used by the
+ * key/pad matrix scanner in matrix.c, which owns PB8-15/PC7-15).
  *
  * The original reads 16 buffer slots, not 8 -- FIRMWARE_ANALYSIS.md's
  * pad-velocity section (FUN_08003ab8) revised this to most likely 8
  * knobs + 8 pad-velocity-sense channels, not unused headroom, and the
- * schematic now independently confirms that revision was correct.
- *
- * STILL NOT CONFIRMED: the exact wiring *within* each 8-channel group
- * -- i.e. whether VR1 is specifically ADC0 (this driver's assumption,
- * matching the schematic's own left-to-right pin order) or the traces
- * cross somewhere between the connector and the pot, and likewise
- * which of PAD1-8 lands on which of ADC8-15 (the schematic shows
- * non-trivial, crossing trace routing here that this project's copy of
- * the schematic isn't high enough resolution to read reliably --
- * misreading it would be worse than leaving it a placeholder). The
- * *order* used here (VR1..VR8 -> channel 0..7 in schematic pin order;
- * PAD1..PAD8 -> channel 8..15 in numeric order) is a reasonable
- * assumption, not independently traced pad-by-pad.
+ * schematic independently confirms that revision was correct.
  */
 #include "adc.h"
 #include "stm32f102.h"
