@@ -46,28 +46,16 @@ static void sysex_append(uint8_t b)
 	sysex_buf[sysex_len++] = b;
 }
 
-static void send_dump(uint8_t program_index)
+/* Packs and sends a raw SysEx byte sequence as USB-MIDI CIN 0x4-0x7
+ * events. Reproduces the original's own packing algorithm (FUN_08005ea4,
+ * decompiled and cross-checked against this function before writing it
+ * -- same 3-bytes-per-event-then-remainder scheme, independently
+ * confirming this project's approach rather than just inventing one). */
+static void pack_and_send(const uint8_t *msg, int len)
 {
-	uint8_t msg[MSG_TOTAL_LEN];
-	msg[0] = 0xF0;
-	msg[1] = 0x47;
-	msg[2] = last_id;
-	msg[3] = 0x7C;
-	msg[4] = 'c';
-	msg[5] = 0x00;
-	msg[6] = MSG_TOTAL_LEN;
-	msg[7] = program_index;
-
-	uint8_t wire[PROGRAM_RECORD_SIZE];
-	program_save_to_wire(program_index, wire);
-	for (int i = 0; i < PROGRAM_RECORD_SIZE; i++) {
-		msg[HEADER_LEN + i] = wire[i];
-	}
-	msg[MSG_TOTAL_LEN - 1] = 0xF7;
-
 	int pos = 0;
-	while (pos < MSG_TOTAL_LEN) {
-		int remaining = MSG_TOTAL_LEN - pos;
+	while (pos < len) {
+		int remaining = len - pos;
 		uint8_t event[4] = {0, 0, 0, 0};
 		if (remaining > 3) {
 			event[0] = 0x04;
@@ -95,6 +83,52 @@ static void send_dump(uint8_t program_index)
 	}
 }
 
+static void send_dump(uint8_t program_index)
+{
+	uint8_t msg[MSG_TOTAL_LEN];
+	msg[0] = 0xF0;
+	msg[1] = 0x47;
+	msg[2] = last_id;
+	msg[3] = 0x7C;
+	msg[4] = 'c';
+	msg[5] = 0x00;
+	msg[6] = MSG_TOTAL_LEN;
+	msg[7] = program_index;
+
+	uint8_t wire[PROGRAM_RECORD_SIZE];
+	program_save_to_wire(program_index, wire);
+	for (int i = 0; i < PROGRAM_RECORD_SIZE; i++) {
+		msg[HEADER_LEN + i] = wire[i];
+	}
+	msg[MSG_TOTAL_LEN - 1] = 0xF7;
+
+	pack_and_send(msg, MSG_TOTAL_LEN);
+}
+
+/* 'd' (status/ack query) reply: F0 47 <id> 7C 'd' 00 01 <current
+ * program> F7 -- reconstructed from FUN_08002eac's 'd' handler, which
+ * overwrites bytes 5-8 of the *same buffer it received the request in*
+ * (bytes 0-4, "F0 47 <id> 7C 'd'", are left untouched) and packs 9
+ * bytes starting from byte 0. Medium confidence: this project inferred
+ * the reused-receive-buffer relationship rather than directly
+ * confirming the two pointer variables involved (DAT_080036c4 and the
+ * request buffer) are the same address -- the request's own header
+ * bytes were never independently re-read to verify. */
+static void send_status(void)
+{
+	uint8_t msg[9];
+	msg[0] = 0xF0;
+	msg[1] = 0x47;
+	msg[2] = last_id;
+	msg[3] = 0x7C;
+	msg[4] = 'd';
+	msg[5] = 0x00;
+	msg[6] = 0x01;
+	msg[7] = current_program;
+	msg[8] = 0xF7;
+	pack_and_send(msg, 9);
+}
+
 static void sysex_process(void)
 {
 	if (sysex_len < HEADER_LEN + 1) {
@@ -106,8 +140,15 @@ static void sysex_process(void)
 
 	last_id = sysex_buf[2];
 	uint8_t cmd = sysex_buf[4];
-	uint8_t program_index = sysex_buf[7];
 
+	if (cmd == 'd') {
+		/* Not gated on program# in the original -- always answers with
+		 * the current program regardless of what's in the request. */
+		send_status();
+		return;
+	}
+
+	uint8_t program_index = sysex_buf[7];
 	if (program_index >= PROGRAM_COUNT) {
 		return;
 	}
@@ -126,7 +167,7 @@ static void sysex_process(void)
 		send_dump(program_index);
 		break;
 	default:
-		/* '`', 'd', 'j', and the '~'-prefixed sub-protocol are not
+		/* '`', 'j', and the '~'-prefixed sub-protocol are not
 		 * implemented -- see sysex.h's header comment. */
 		break;
 	}

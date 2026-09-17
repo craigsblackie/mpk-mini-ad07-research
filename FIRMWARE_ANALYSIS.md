@@ -956,3 +956,74 @@ equivalent free-running counter (incremented once per `keys_process()`
 call, matching the original's category of timing source exactly, even
 though the absolute calibration will differ from the original's actual
 main-loop rate).
+
+## Additional SysEx findings: confirmed factory defaults, the 'd' command, and independent packer confirmation
+
+Following up on the SysEx section above, three more findings from the
+same `FUN_08002eac` read:
+
+**The `'d'` command's reply, reconstructed.** Its handler overwrites
+bytes 5-8 of the *same buffer the request arrived in* (`pcVar10[5]=0,
+[6]=1, [7]=*pbVar5 (current program), [8]=0xF7`), leaving bytes 0-4
+(`F0 47 <id> 7C 'd'`) untouched, then packs 9 bytes starting from byte
+0 via `FUN_08005ea4`. Reconstructed reply: `F0 47 <id> 7C 'd' 00 01
+<current program> F7` — implemented in `firmware/sysex.c`'s
+`send_status()`. Medium confidence: inferred that `FUN_08005ea4`'s
+source pointer (`DAT_080036c4`) is the same address as the request
+buffer rather than independently confirming it, since both resolve to
+plain SRAM addresses this pass didn't cross-reference further.
+
+**`FUN_08005ea4` independently confirms this project's own SysEx TX
+packing.** Decompiling it shows the exact same algorithm `firmware/
+sysex.c` was already written with: pack 3 raw bytes per USB-MIDI event
+under CIN `0x4`, then a final event with CIN `4 + remaining_count`
+(`0x5`/`0x6`/`0x7` for 1/2/3 leftover bytes) padded with zeros. Good
+independent confirmation, not just an assumption about how USB-MIDI
+SysEx framing "should" work.
+
+**Confirmed factory-default record values**, read directly off the
+`'j'` (`0x7F` sub-case) bootstrap/factory-reset handler, which writes
+literal byte constants into a fresh record via negative offsets from
+the receive buffer (`record_offset = pcVar10_offset + 0x1F9`, matching
+the `'a'` handler's own `record_base = pcVar10 + program#*0x65 -
+0x1F9`). Converting every write in that handler:
+
+| Record offset | Confirmed factory default | Previously documented clamp/fallback (`FUN_08005ac8`) |
+| --- | --- | --- |
+| `0x00` (channel) | 0 | — |
+| `0x01` | 0 | — |
+| `0x02` | 4 | clamp 0-8, fallback 4 (matches) |
+| `0x03` | 12 | clamp 0-24, fallback 12 (matches) |
+| `0x04` (arp enable) | 0 (off) | boolean |
+| `0x05` | **1** | clamp 0-5, fallback **4** (true default differs from the out-of-range fallback — expected, they're different concepts) |
+| `0x06` (arp clock div) | **5** | clamp 0-7, fallback **7** (same distinction) |
+| `0x07`, `0x08` | 0 | boolean |
+| `0x09` | 3 | clamp 2-4 |
+| `0x0a`/`0x0b` (tempo) | 0/120 → **120 BPM** | clamp 30-240 |
+| `0x0c` | 0 | clamp 0-3 |
+| Each pad's `+0x0` byte (`0x0d`, `0x15`, `0x1d`, ... `0x45`) | **pad index + 1** (1,2,3,4,5,6,7,8) | 0-127 |
+
+The rest of each pad sub-record and the *entire* knob CC region
+(`0x4d..0x64`) are **not touched** by this handler — this project has
+no evidence for their true factory defaults, unlike the fields above.
+`firmware/program.c`'s `init_one()` now uses these confirmed values for
+every field this table covers, and keeps clearly-flagged placeholders
+only for what's still unconfirmed (knob CCs, each pad's PC#/CC#
+fields). Note also: the `+0x0` pad field's confirmed value (a small
+1-8 index) casts doubt on this project's assumption that it's a MIDI
+note number by default — 1-8 is an implausibly low note range. It may
+be a plain pad-index/enable marker rather than "note number," with the
+real default note living elsewhere or simply not factory-populated;
+not re-resolved this pass.
+
+**Not implemented**: the `'j'` command's `0x7F` full-reset reply uses a
+**different message framing** than the rest of this protocol — unpacking
+its hardcoded USB-MIDI bytes gives `F0 47 00 04 7C 6A 00 04 06 7F 02 00
+64 F7`, which has an extra byte (`04`) before the `7C` delimiter
+compared to every other command's `F0 47 <id> 7C <cmd> ...` layout, not
+reconciled with the main header format this pass. Also not
+implemented: `` ` `` (raw payload capture into a stack-local buffer
+that's never read back out within the same call — likely dead/unused
+in practice, or part of a multi-message flow this project hasn't
+traced) and the `0x5a` sub-case of `'j'` (echoes back a single
+hardware-status byte from a source not identified).

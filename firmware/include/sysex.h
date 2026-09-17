@@ -16,11 +16,15 @@
  * program dump) using program.c's decoded record layout and wire
  * reorder table.
  *
- * NOT implemented: '`' (raw payload capture), 'd' and 'j' (device
- * identification/bootstrap queries) -- lower priority than actually
- * being able to load and save program configurations, and 'j' in
- * particular writes a large block of hardcoded initialization data
- * whose purpose isn't fully understood yet (see FIRMWARE_ANALYSIS.md).
+ * Also implements 'd' (status/ack query -- replies with the current
+ * program number).
+ *
+ * NOT implemented: '`' (raw payload capture -- doesn't appear to do
+ * anything durable in the original either) and 'j' (device
+ * identification/bootstrap/factory-reset) -- 'j' in particular writes
+ * a large block of hardcoded initialization data and its reply uses a
+ * different framing than the rest of this protocol, not fully
+ * reconciled with the main header format (see FIRMWARE_ANALYSIS.md).
  */
 void sysex_init(void);
 

@@ -8,19 +8,27 @@
  * confirming against the two functions that actually consume each range
  * (FUN_0800478c for knobs, FUN_08003ab8 for pads). Not guessed.
  *
- * What's NOT confirmed: the exact default values AKAI's firmware ships
- * a factory-reset program with. default_program below picks reasonable
- * values within each field's confirmed valid range (same
- * placeholder-honesty policy as the rest of this firmware) -- channel 0,
- * arp off, a mid-range clock division, 120 BPM, knob CCs 70-77, pad
- * notes 36-43 (matching this project's earlier standalone placeholders
- * in knobs.c/pads.c, now sourced from one place instead of two).
+ * The header (record+0x00..0x0c) and each pad sub-record's first byte
+ * (record+0x0d+pad*8) now use the original's own confirmed factory-
+ * default values, not guesses -- read directly out of the SysEx 'j'
+ * (0x7F sub-case) bootstrap/factory-reset handler in FUN_08002eac,
+ * which writes literal byte constants into a fresh record (see
+ * FIRMWARE_ANALYSIS.md's SysEx section for the negative-offset-to-
+ * record-offset derivation). What's NOT confirmed: the rest of each
+ * pad sub-record, and the entire knob CC region (record+0x4d..0x64) --
+ * the 'j' handler doesn't touch either, so this project has no
+ * evidence for their true factory defaults. Those still use reasonable
+ * placeholder values (knob CCs 70-77, pad PC# = pad index).
  */
 #include "program.h"
 
 #define OFF_CHANNEL 0x00
+#define OFF_UNKNOWN_2 0x02 /* confirmed factory default 4; meaning unidentified */
+#define OFF_UNKNOWN_3 0x03 /* confirmed factory default 12; meaning unidentified */
 #define OFF_ARP_ENABLED 0x04
+#define OFF_UNKNOWN_5 0x05 /* confirmed factory default 1; meaning unidentified */
 #define OFF_ARP_CLOCK_DIV 0x06
+#define OFF_UNKNOWN_9 0x09 /* confirmed factory default 3; meaning unidentified */
 #define OFF_TEMPO_LOW 0x0a
 #define OFF_TEMPO_HIGH 0x0b
 #define OFF_PAD_BASE 0x0d
@@ -35,15 +43,19 @@
 program_record_t programs[PROGRAM_COUNT];
 uint8_t current_program;
 
-static void init_one(program_record_t *p, uint8_t base_cc, uint8_t base_note)
+static void init_one(program_record_t *p, uint8_t base_cc)
 {
 	for (int i = 0; i < PROGRAM_RECORD_SIZE; i++) {
 		p->raw[i] = 0;
 	}
 
 	p->raw[OFF_CHANNEL] = 0;
+	p->raw[OFF_UNKNOWN_2] = 4;
+	p->raw[OFF_UNKNOWN_3] = 12;
 	p->raw[OFF_ARP_ENABLED] = 0;
-	p->raw[OFF_ARP_CLOCK_DIV] = 2; /* one of the confirmed 0-7 divisions */
+	p->raw[OFF_UNKNOWN_5] = 1;
+	p->raw[OFF_ARP_CLOCK_DIV] = 5;
+	p->raw[OFF_UNKNOWN_9] = 3;
 	/* Tempo = byte[0xb] + byte[0xa]*0x80 = 120 -> byte[0xa]=0, byte[0xb]=120 */
 	p->raw[OFF_TEMPO_LOW] = 0;
 	p->raw[OFF_TEMPO_HIGH] = 120;
@@ -53,8 +65,8 @@ static void init_one(program_record_t *p, uint8_t base_cc, uint8_t base_note)
 	}
 	for (int pad = 0; pad < 8; pad++) {
 		int base = OFF_PAD_BASE + pad * PAD_STRIDE;
-		p->raw[base + OFF_PAD_NOTE] = (uint8_t)(base_note + pad);
-		p->raw[base + OFF_PAD_PC] = (uint8_t)pad;
+		p->raw[base + OFF_PAD_NOTE] = (uint8_t)(pad + 1); /* confirmed factory default */
+		p->raw[base + OFF_PAD_PC] = (uint8_t)pad;          /* placeholder */
 		p->raw[base + OFF_PAD_CC] = (uint8_t)(base_cc + pad); /* placeholder */
 	}
 	p->pad_mode = PAD_MODE_NOTE;
@@ -64,7 +76,7 @@ void program_init(void)
 {
 	current_program = 0;
 	for (int i = 0; i < PROGRAM_COUNT; i++) {
-		init_one(&programs[i], 70, 36);
+		init_one(&programs[i], 70);
 	}
 }
 

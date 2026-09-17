@@ -96,26 +96,34 @@ land.
   and `arp.c` now read CC numbers, note/PC/CC assignments, MIDI channel,
   and arp on/off/clock-division/tempo from here instead of standalone
   placeholder tables — the *architecture* now matches the original
-  (per-program-configurable), even though the record's default field
-  *values* are still placeholders until real ones are loaded — see the
-  SysEx entry below, which now provides exactly that path.
-- **SysEx editor protocol — receive and send program configs**
-  (`src/sysex.c`): reassembles incoming USB-MIDI SysEx packets and
-  implements the `a` (write program), `b` (select program), and `c`
-  (read/dump program) commands against `program.c`'s record store,
-  including the exact byte-reorder table the wire format uses
-  (confirmed by reading the original's `FUN_08002eac` in full — an
-  earlier pass of this project's analysis had incorrectly guessed this
-  was a 7-bit nibble-packing scheme; it's actually a pure reorder of
-  the same 101 bytes, now corrected in `FIRMWARE_ANALYSIS.md`). This
-  means a real program dump sent by AKAI's official editor software (or
-  a replacement config tool) can now actually be received and applied,
-  not just a placeholder default — this was the single biggest gap for
-  behavioral parity as of the last update to this file. **Not yet
-  tested against a real SysEx sender** — the message framing and
-  reorder table are verified by construction (the encode/decode tables
-  are checked to be exact inverse permutations) but not against a real
-  captured dump from the official editor.
+  (per-program-configurable). Default field *values*: the header
+  fields (channel, arp settings, tempo, and three still-unidentified
+  bytes) and each pad's first sub-record byte now use the original's
+  own confirmed factory-reset defaults (read out of the SysEx `j`
+  bootstrap handler — see `program.c`'s header). The knob CC region and
+  the rest of each pad's sub-record have no confirmed factory data, so
+  those stay reasonable placeholders. Real values for *any* field can
+  also now be loaded via SysEx — see below.
+- **SysEx editor protocol — receive and send program configs, query
+  status** (`src/sysex.c`): reassembles incoming USB-MIDI SysEx packets
+  and implements `a` (write program), `b` (select program), `c`
+  (read/dump program), and `d` (status query — replies with the current
+  program number) against `program.c`'s record store, including the
+  exact byte-reorder table the `a`/`c` wire format uses (confirmed by
+  reading the original's `FUN_08002eac` in full — an earlier pass of
+  this project's analysis had incorrectly guessed this was a 7-bit
+  nibble-packing scheme; it's actually a pure reorder of the same 101
+  bytes, now corrected in `FIRMWARE_ANALYSIS.md`). The USB-MIDI SysEx
+  packing algorithm itself (`pack_and_send()`) is independently
+  confirmed against the original's own packing function
+  (`FUN_08005ea4`), not just assumed. This means a real program dump
+  sent by AKAI's official editor software (or a replacement config
+  tool) can now actually be received and applied, not just a
+  placeholder default. **Not yet tested against a real SysEx sender** —
+  the message framing and reorder table are verified by construction
+  (the encode/decode tables are checked to be exact inverse
+  permutations, and the packer matches the original's own algorithm)
+  but not against a real captured dump from the official editor.
 - **Arpeggiator** (`src/arp.c`): steps ascending-only ("up" mode) through
   currently-held notes, gated on the program record's real arp on/off
   flag and rate-scaled by its clock-division and tempo fields, now with
@@ -128,12 +136,13 @@ land.
 ## What's stubbed / not yet implemented
 
 - **Knob and pad ADC-channel mappings** (see caveats above).
-- **SysEx editor protocol commands `` ` `` (raw dump capture), `d` and
-  `j` (device identification/bootstrap)** — not implemented (see
-  `sysex.c`'s header). `a` (write program), `b` (select program), and
-  `c` (read/dump program) *are* implemented — see below.
-- What incoming MIDI (EP1 OUT) actually *does* — the plumbing exists
-  (`usb_midi_on_receive`) but nothing consumes it yet.
+- **SysEx editor protocol commands `` ` `` (raw dump capture) and `j`
+  (device identification/bootstrap/factory-reset)** — not implemented
+  (see `sysex.c`'s header for why). `a`, `b`, `c`, and `d` *are*
+  implemented — see above.
+- Incoming MIDI (EP1 OUT) is now consumed by `sysex.c` for SysEx
+  program management; non-SysEx incoming MIDI (e.g. a DAW driving this
+  device's pads as a control surface) still isn't consumed by anything.
 - There is no pitch-bend/mod-wheel/joystick handling because there is no
   such control on this hardware — confirmed against a photo of the real
   device (see `FIRMWARE_ANALYSIS.md`'s joystick section). Nothing to
