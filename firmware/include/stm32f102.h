@@ -23,6 +23,11 @@ typedef struct {
 } SysTick_TypeDef;
 #define SysTick ((SysTick_TypeDef *)0xE000E010u)
 
+#define SysTick_CTRL_ENABLE (1u << 0)
+#define SysTick_CTRL_TICKINT (1u << 1)
+#define SysTick_CTRL_CLKSOURCE (1u << 2) /* 1 = processor clock (AHB) */
+#define SysTick_CTRL_COUNTFLAG (1u << 16)
+
 /* ---- RCC ---- */
 typedef struct {
 	__IO uint32_t CR;

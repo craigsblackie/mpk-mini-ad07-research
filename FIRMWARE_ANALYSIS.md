@@ -875,3 +875,63 @@ single on/off contact — a more sophisticated keybed than this project
 had assumed. Not reimplemented in `firmware/` yet (no tick/timestamp
 source exists there), tracked as a follow-up rather than the
 resolved-and-done key-index mapping itself.
+
+### Follow-up: the dual-switch mechanism in full (mostly confirmed, one open question)
+
+With live Ghidra access back, `FUN_08004990` was read in full end-to-end
+rather than partially. Per key index (0-24), a 3-state byte tracks
+idle/armed/fired, and the two row-bits sharing that key index
+(confirmed `2N`/`2N+1` pair from the indexing formula above) each drive
+one transition:
+
+- **The odd-numbered bit**: transitioning to its "0" value while idle
+  → arms the key (state 1) and records the current value of a 16-bit
+  reference (`*(short*)(DAT_08004c04+4)`, called "the reference" below
+  since its exact nature is the one open question here) into a
+  per-key timestamp slot. Transitioning to its "1" value while in the
+  fired state (2) → sends the Note Off and resets to idle; any other
+  odd-bit "1" transition just resets to idle without sending anything.
+- **The even-numbered bit**: transitioning to its "0" value while armed
+  (state 1) → computes `delta = reference_now - stored_timestamp`,
+  clamps it to 0-126, sets state to fired (2), and sends the Note On
+  with **velocity = 127 − delta** (see the table below), plus a
+  transpose applied via the current program's `record+2`/`record+3`
+  fields (an octave/semitone offset — consistent with, though not
+  identical in mechanism to, `firmware/buttons.c`'s octave feature).
+  There's also a second, SysEx-editor-mode-gated branch here (guarded
+  by the same `record+4`/two other flag bytes this document hasn't
+  named yet) that records the note into an editor-facing "recently hit
+  keys" list instead of sending real MIDI — not reimplemented, lower
+  priority than the main path.
+
+**The velocity "curve" is a plain linear inversion, not a nonlinear
+curve** — reading the raw bytes at flash `0x08006f4e` (immediately
+before the key-index table at `0x08006fcd`, same base pointer with a
+`-0x7f` offset) gives 127 bytes: `7F 7E 7D ... 02 01`, i.e.
+`table[n] = 127 - n`. So the real formula is simply
+**`velocity = 127 - clamp(delta, 0, 126)`** — faster (smaller-delta)
+double-switch actuation produces higher velocity, exactly as expected
+for a real make-before-break velocity-sensing mechanism, and velocity
+never reaches 0 (minimum 1). This value range (delta clamped to 0-126)
+is physically consistent with the reference being real elapsed time in
+milliseconds — a plausible window for two mechanical contacts closing
+in sequence during a keypress.
+
+**What's still open**: what actually increments
+`*(short*)(DAT_08004c04+4)`. `get_xrefs_to` found two writers
+(`0x08006108`, `0x0800610e`) and one more reader (`0x080060fe`)
+outside `FUN_08004990` itself, but none of them fall inside a function
+boundary Ghidra's auto-analysis has identified — they're in a gap in
+the current analysis coverage. Chasing this further would need either
+manually defining a function there (a five-minute job in the Ghidra
+GUI, not attempted this pass) or empirical testing against real
+hardware. Until it's confirmed to genuinely be a millisecond-scale
+timer (as the value range suggests) rather than, say, a scan-cycle
+counter with a different effective time unit, this project is holding
+off on reimplementing the mechanism in `firmware/keys.c` — the arm/
+fire/note-off state machine and the velocity formula above are both
+solid enough to implement, but getting the *time reference* wrong
+would silently miscalibrate every note's velocity, which is worse than
+the current honestly-flagged simplification (a keypress currently
+emits the same note twice via `firmware/keys.c`'s independent per-bit
+edge detection, rather than one velocity-scaled event).

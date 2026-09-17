@@ -15,6 +15,7 @@
  * areas.
  */
 #include "stm32f102.h"
+#include "systick.h"
 #include "matrix.h"
 #include "midi_ring.h"
 #include "program.h"
@@ -71,6 +72,7 @@ static void clock_init(void)
 int main(void)
 {
 	clock_init();
+	systick_init();
 	matrix_init();
 	midi_ring_init();
 	program_init();

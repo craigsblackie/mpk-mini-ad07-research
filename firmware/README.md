@@ -49,6 +49,14 @@ land.
   against RM0008 this session.
 - Startup code, vector table, linker script: standard Cortex-M3/STM32F1
   boilerplate, the same shape as any STM32F1 project.
+- **Millisecond timebase** (`src/systick.c`): standard Cortex-M3 SysTick
+  setup, 1ms ticks off the 48 MHz SYSCLK. Not derived from the
+  original's disassembly — `FIRMWARE_ANALYSIS.md` found no evidence the
+  original uses SysTick or any timer at all (its apparent all-polling
+  main-loop architecture doesn't need one). Gives this firmware its
+  first real wall-clock reference, now used by `stuck_note.c`'s timeout
+  and `arp.c`'s step rate (both previously uncalibrated main-loop-
+  iteration counts).
 
 - **Knob → MIDI CC** (`src/adc.c`, `src/knobs.c`): ADC1 in continuous
   scan mode over 16 channels, DMA1 channel 1 keeping `adc_raw[]` fresh
@@ -106,23 +114,29 @@ land.
   are checked to be exact inverse permutations) but not against a real
   captured dump from the official editor.
 - **Arpeggiator** (`src/arp.c`): steps ascending-only ("up" mode) through
-  currently-held notes, now gated on the program record's real arp
-  on/off flag and rate-scaled by its clock-division and tempo fields
-  (previously a fixed, always-off placeholder). Still partial: range,
-  direction mode, gate length, and latch aren't decoded, and there's no
-  timer peripheral yet to calibrate the tick rate against real
-  milliseconds (see `arp.c`'s header for the exact caveat). Still not
-  wired to key/pad input.
+  currently-held notes, gated on the program record's real arp on/off
+  flag and rate-scaled by its clock-division and tempo fields, now with
+  genuinely calibrated real-time step timing via `systick.c` (a step at
+  120 BPM with the default clock division is exactly 500ms — a standard
+  "1/4 note" arp rate). Still partial: range, direction mode, gate
+  length, and latch parameters aren't decoded. Still not wired to
+  key/pad input.
 
 ## What's stubbed / not yet implemented
 
-- **Dual-switch key velocity sensing** (see caveat above) — the key-index
-  mapping itself is resolved; deriving real per-key velocity from the
-  two-switch timing (rather than a fixed default) is the remaining gap.
+- **Dual-switch key velocity sensing** — the key-index mapping and the
+  velocity formula (`127 - clamp(delta, 0, 126)`, a plain linear
+  inversion, not a curve) are both confirmed now (see
+  `FIRMWARE_ANALYSIS.md`'s "Follow-up: the dual-switch mechanism in
+  full" section), but the *time reference* the original clocks that
+  delta against couldn't be confirmed as genuinely millisecond-scale
+  this pass (its update site fell in a gap in the current Ghidra
+  analysis). Deliberately not implemented until that's resolved —
+  getting it wrong would silently miscalibrate every note's velocity,
+  worse than the current honestly-flagged simplification (`keys.c`
+  still emits the same note twice per keypress instead of one
+  velocity-scaled event).
 - **Knob and pad ADC-channel mappings** (see caveats above).
-- **A timer/tick peripheral driver** — nothing in this firmware has a
-  real wall-clock reference yet; `stuck_note.c`'s timeout and `arp.c`'s
-  step rate both count main-loop iterations as an uncalibrated stand-in.
 - **SysEx editor protocol commands `` ` `` (raw dump capture), `d` and
   `j` (device identification/bootstrap)** — not implemented (see
   `sysex.c`'s header). `a` (write program), `b` (select program), and

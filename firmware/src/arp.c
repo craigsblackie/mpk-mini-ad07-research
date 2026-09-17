@@ -18,15 +18,13 @@
  * constant and an always-off default.
  *
  * The confirmed clock-division tick table (FIRMWARE_ANALYSIS.md) gives
- * *relative* step timing (division 0 steps twice as fast as division
- * "16 ticks", etc.) and tempo gives a real BPM to scale by -- but this
- * firmware has no timer/tick peripheral driver yet (see main.c), so
- * there's no wall-clock reference to calibrate "ticks" against real
- * milliseconds. BASE_ITERATIONS_PER_TICK below is an uncalibrated
- * placeholder for "how many main-loop iterations is one MIDI-clock
- * tick at 120 BPM" -- changing tempo/division now genuinely changes
- * the arp rate relative to that placeholder, but the absolute speed
- * isn't real-time-accurate until a timer exists to calibrate it.
+ * ticks-per-step relative to the standard MIDI convention of 24 clock
+ * ticks per quarter note, and tempo gives a real BPM -- combined with
+ * systick.c's now-real millisecond timebase, step timing is genuinely
+ * calibrated: step_ms = ticks_per_step * 2500 / bpm (2500 = 60000ms
+ * per minute / 24 ticks per quarter note). At 120 BPM with division 0
+ * (24 ticks = one quarter note), that's exactly 500ms/step, matching a
+ * standard "1/4 note" arpeggiator rate.
  *
  * NOT WIRED UP YET: arp_note_on()/arp_note_off() aren't called from
  * anywhere -- keys.c and pads.c still send Note On/Off straight to
@@ -36,13 +34,11 @@
 #include "arp.h"
 #include "midi_ring.h"
 #include "program.h"
+#include "systick.h"
 
 /* record+0x06 (0-7) -> ticks-per-step, read directly from the
  * original's confirmed switch table (FIRMWARE_ANALYSIS.md). */
 static const uint8_t clock_div_ticks[8] = {24, 16, 12, 8, 6, 4, 3, 2};
-
-#define BASE_ITERATIONS_PER_TICK 500 /* placeholder -- see file header */
-#define REFERENCE_BPM 120
 
 uint8_t arp_enabled = 1; /* manual override, ANDed with the program's
                           * own arp-enabled flag below -- defaults on
@@ -52,16 +48,16 @@ static uint8_t held_notes[ARP_MAX_NOTES];
 static uint8_t held_velocity[ARP_MAX_NOTES];
 static uint8_t held_count;
 static uint8_t step_index;
-static uint32_t tick;
+static uint32_t next_step_at_ms;
 static uint8_t last_sent_note;
 static uint8_t last_sent_active;
 
 void arp_init(void)
 {
-	arp_enabled = 0;
+	arp_enabled = 1;
 	held_count = 0;
 	step_index = 0;
-	tick = 0;
+	next_step_at_ms = 0;
 	last_sent_active = 0;
 }
 
@@ -110,14 +106,11 @@ static void send_event(uint8_t on, uint8_t note, uint8_t velocity)
 	midi_ring_push(event, 4);
 }
 
-static uint32_t step_interval_ticks(void)
+static uint32_t step_interval_ms(void)
 {
 	uint8_t ticks_per_step = clock_div_ticks[program_arp_clock_div()];
 	uint16_t bpm = program_tempo_bpm();
-	/* Scaled relative to REFERENCE_BPM so tempo/division changes
-	 * actually change the rate -- see file header for the calibration
-	 * caveat. */
-	return (uint32_t)ticks_per_step * BASE_ITERATIONS_PER_TICK * REFERENCE_BPM / bpm;
+	return ((uint32_t)ticks_per_step * 2500u) / bpm;
 }
 
 void arp_process(void)
@@ -127,16 +120,16 @@ void arp_process(void)
 			send_event(0, last_sent_note, 0);
 			last_sent_active = 0;
 		}
-		tick = 0;
 		step_index = 0;
+		next_step_at_ms = systick_millis();
 		return;
 	}
 
-	tick++;
-	if (tick < step_interval_ticks()) {
+	uint32_t now = systick_millis();
+	if ((int32_t)(now - next_step_at_ms) < 0) {
 		return;
 	}
-	tick = 0;
+	next_step_at_ms = now + step_interval_ms();
 
 	if (last_sent_active) {
 		send_event(0, last_sent_note, 0);
