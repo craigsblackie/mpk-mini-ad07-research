@@ -229,13 +229,17 @@ symmetrical RX ring buffer for EP1 OUT (incoming MIDI) using the same
 push/drain pattern — likely, given how systematically this buffer design is
 used, but not confirmed.
 
-`FUN_08004990` itself is large (~470 lines decompiled) and only partially
-traced — the Note On/Off construction is confirmed, but a substantial tail
-of the function (branches on `cVar1 == 'b'`/`'c'`, large table-copy
-sequences) wasn't reached this pass. Worth revisiting; possibly handles
-CC/pitch-bend/aftertouch, or a separate editor-configuration command
-protocol (SysEx from AKAI's editor software, for remapping pads/knobs) that
-happens to share this function.
+**Correction (later in this document's own timeline): `FUN_08004990` was
+re-read in full — it's actually only 157 lines, not ~470, and has no
+`'b'`/`'c'` command branches at all.** That claim was a mixup with
+`FUN_08002eac` (the SysEx handler, which genuinely does have `'b'`/`'c'`
+branches — see its section below) — an error made earlier in this
+session's own analysis, caught and corrected during the later search for
+the joystick handler. `FUN_08004990` is now confirmed fully traced: it
+builds both Note On and Note Off events directly (including a
+velocity/aftertouch-like scaled secondary value in the Note On path),
+with no hidden untraced content. Left here, struck through in spirit
+rather than silently deleted, as a record of the correction.
 
 ## Confirmed: the main loop, and MIDI generation is not just keys
 
@@ -512,6 +516,39 @@ TEMPO" button is obviously present on this device's layout, so this may
 be a held-button-tap gesture on an existing control, or arpeggiator
 timing derived some other way). Lowest confidence of the functions
 discussed in this document — flagged for follow-up rather than relied on.
+
+## Two more `ring_push` callers identified — neither is the joystick
+
+Completing the trace of every direct caller of `FUN_08006d54` (there are
+8 distinct ones total):
+
+- **`FUN_08002588` — likely the arpeggiator step sequencer.** Indexes the
+  per-program record (the confirmed 101-byte stride) and tracks a
+  progressing step count against a stored threshold, gated on a record
+  field (`record+7`). Shape matches "advance through a held-note sequence
+  each time it's this step's turn," consistent with an arpeggiator's core
+  loop rather than a physical-control handler. Medium confidence.
+- **`FUN_08005188` — likely stuck-note/pad-off cleanup.** Iterates 8
+  fixed slots, and for any slot flagged, resets its state block and —
+  only if the stored pending event's Code Index Number is `8` (Note Off)
+  and its velocity byte is a valid `< 0x80` — force-sends that stored
+  Note Off via `ring_push`. Reads as a timeout/safety mechanism ensuring
+  notes don't stay stuck on. Medium confidence.
+
+**Neither is the pitch/mod joystick.** All 8 direct `ring_push` callers
+are now accounted for, and none matches the bipolar/centered-scaling
+signature expected of pitch bend. The obvious next lead — checking the
+key edge-detector (`FUN_08004990`) for an untraced tail that might fold
+in joystick handling — turned out to be based on an earlier bookkeeping
+error in this document (see the correction in that function's section
+above): it's fully traced already and doesn't contain it. **The joystick
+handler's location is genuinely unresolved as of this pass** — every
+function known to reach `ring_push`, directly or via the one function
+believed to have unread content, has now been checked. Finding it needs
+either a fresh search strategy (e.g. looking for bipolar-centered ADC
+scaling logic directly, independent of the `ring_push` call graph, in
+case pitch/mod events are queued some other way) or accepting it may not
+be reachable through static analysis alone this session.
 
 ## Not yet analyzed
 
