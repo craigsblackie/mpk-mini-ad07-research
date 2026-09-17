@@ -592,3 +592,152 @@ this document worked through them:
   standard-library-shaped (SetEPTxStatus-style primitives) and less likely
   to matter for building replacement firmware than reimplementing the
   logic already documented above.
+
+## Major new finding: 101-byte per-program record layout, mostly decoded
+
+Tracing three previously-unidentified main-loop functions
+(`FUN_08005734`, `FUN_08002400`, `FUN_08005ac8`) against the raw
+decompiler output resolved most of the open placeholders in `firmware/`
+in one pass. All three consistently use the confirmed `* 0x65` (101)
+per-program stride, and their field offsets agree with each other.
+
+### `FUN_08005ac8` — per-program record range validation/clamp (high confidence)
+
+Takes a program index (`param_1 < 5` — only 5 programs get validated;
+worth reconciling against how many total program slots this device has),
+and clamps each field of that program's 101-byte record to a valid
+range, resetting out-of-range values to a documented default. This is
+effectively a self-documenting field map:
+
+| Offset | Range (clamp) | Default | Likely meaning |
+| --- | --- | --- | --- |
+| `+0x00`, `+0x01` | 0-15 | — | Unidentified |
+| `+0x02` | 0-8 | 4 | Unidentified (range matches 8 pads) |
+| `+0x03` | 0-24 | 12 | Unidentified (range matches the arp clock-division ticks found in `FUN_08005734`, below — possibly related, not confirmed identical) |
+| `+0x04` | boolean | — | **Arp on/off** — cross-confirmed against `FUN_08005734` (see below) |
+| `+0x05` | 0-5 | 4 | Unidentified (6 values — plausibly an arp mode: up/down/up-down/random/order/chord) |
+| `+0x06` | 0-7 | 7 | **Arp clock-division selector** — cross-confirmed against `FUN_08005734`'s `switch` (see below) |
+| `+0x07`, `+0x08` | boolean | — | Unidentified |
+| `+0x09` | 2-4 | — | Unidentified (plausibly arp octave range) |
+| `+0x0a`,`+0x0b` | combined 15-bit value, 30-240 | 30 (low)/112 (high) | **Tempo** — the 30-240 range is a textbook BPM clamp |
+| `+0x0c` | 0-3 | — | Unidentified |
+| `+0x0d`..`+0x4c` | 8 × 8-byte sub-records | — | **Per-pad config** (8 pads = `PADS_NUM`) — see below |
+| `+0x4d`..`+0x64` | 8 × 3-byte sub-records, fields 0-127 | — | **Per-knob CC config** (8 knobs = `ADC_NUM_CHANNELS`) — ends exactly at byte 100, confirming the 101-byte record boundary independently |
+
+**Cross-checked against the two functions that actually *consume* these
+ranges** (`FUN_0800478c`, this document's already-documented knob/CC
+handler, and `FUN_08003ab8`, the pad velocity handler) — this is where
+an earlier pass of this table had the two ranges backwards; corrected
+here after reading both functions directly rather than relying on the
+validator function's offsets alone:
+
+- **`+0x4d`..`+0x64` (3 bytes × 8 knobs) — knob CC config, confirmed by
+  `FUN_0800478c`.** Per knob: `+0` is simultaneously the "this knob is
+  assigned" gate (skipped if 0) *and* the CC number sent (read, clamped
+  to 0x7f, reused directly as the outgoing CC# — no separate CC-number
+  field). `+1`/`+2` hold a smoothing/ramp state pair the function reads
+  as a starting value and a target, gradually sliding the sent CC value
+  toward the latest ADC reading rather than jumping instantly — these
+  looked at first glance like they might be persistent per-program
+  fields but are more likely working state, not confirmed either way.
+  The MIDI channel for all 8 knobs comes from a single shared byte at
+  `record+0x00` (clamped 0-15 per `FUN_08005ac8` above), not from each
+  knob's own sub-record.
+- **`+0x0d`..`+0x4c` (8 bytes × 8 pads) — pad config, confirmed by
+  `FUN_08003ab8`.** Each pad can apparently be configured to send one
+  of three message types, selected by a single shared mode byte (not
+  per-pad): Note (data value from sub-record `+0x0`), Program Change
+  (`+0x2`), or Control Change (`+0x4`) — i.e. bytes 0/2/4 of each
+  8-byte sub-record are a note number, a program number, and a CC
+  number respectively, and whichever one is active is chosen by that
+  shared mode byte. Byte `+0x6` gates a toggle/latch behavior (seen
+  used only when the active mode is Note or CC). Bytes `+1`, `+3`,
+  `+5`, `+7` not yet identified.
+
+**This directly narrows the remaining knob-CC and pad-note placeholders
+in `firmware/`**: we now know *exactly* which bytes of the record to
+target for empirical decoding (dump a program via SysEx, change one
+knob's CC assignment or one pad's note in AKAI's real editor, dump
+again, diff within the specific sub-record above) rather than searching
+the full 101 bytes.
+
+### `FUN_08005734` — arpeggiator engine parameter cache (medium-high confidence)
+
+A change-triggered "recompute if the active program's arp-related fields
+changed" function, called unconditionally every main-loop iteration
+(cheap to call — it does nothing unless something actually changed).
+Confirms:
+
+- **`record+4` is the arp on/off flag** (`cVar1` in the decompiled
+  output) — when it changes, the function resets two 25-entry SRAM
+  arrays to `0xFF` (25 = this keyboard's key count — very likely a
+  per-key "is this key part of the current arp hold set" tracking
+  table).
+- **`record+6` (0-7) selects a clock division**, via a `switch` that
+  assigns two engine variables per case:
+
+  | `record+6` | Tick value | Step value |
+  | --- | --- | --- |
+  | 0 | 0x18 (24) | 0xc (12) |
+  | 1 | 0x10 (16) | 8 |
+  | 2 | 0xc (12) | 6 |
+  | 3 | 8 | 4 |
+  | 4 | 6 | 3 |
+  | 5 | 4 | 2 |
+  | 6 | 3 | 1 |
+  | 7 | 2 | 1 |
+
+  24 ticks is the standard MIDI clock count for a quarter note, and this
+  table halves roughly geometrically from there — strongly consistent
+  with a standard "1/4, 1/4T, 1/8, 1/8T, 1/16, 1/16T, 1/32, 1/32T"-style
+  arpeggiator rate selector (exact note-length labels not confirmed, but
+  the tick ratios are directly read from the binary, not guessed).
+- When arp mode is *off* (`record+4 == 0`), the same `record+6`
+  `switch` instead computes a *scaled tempo value* from a 16-bit input
+  (`uVar3`) using near-identical divisors (`uVar3/1`, `uVar3*2/3`,
+  `uVar3/2`, `uVar3/3`, `uVar3/4`, `uVar3/6`, `uVar3/8`([`uVar3>>3`]),
+  `uVar3/12`) — the same musical-division family applied to a raw tempo
+  period instead of a fixed tick table. Likely feeds the device's MIDI
+  clock/tap-tempo output rather than the arp engine directly.
+
+**Practical implication for `firmware/`'s `arp.c`**: the clock-division
+tick/step table above is real, confirmed data — `STEP_INTERVAL_TICKS`'s
+placeholder could be replaced with a proper 8-entry division table once
+a real tempo source is identified (the `+0x0a`/`+0x0b` tempo field
+found in `FUN_08005ac8` above is the natural candidate to combine with
+this table). Not wired up yet — `arp.c` remains a fixed-tempo skeleton,
+since the exact tick-to-real-time conversion (what timebase increments
+these "ticks"?) isn't confirmed.
+
+### `FUN_08002400` — ADC oversampling/averaging engine (medium-high confidence)
+
+Runs every main-loop iteration but only actually does anything when a
+gate function (`FUN_08003820(2)`, not traced) signals a new batch is
+ready. When it fires: accumulates 16 channels' worth of values (`& 0xFFF`
+— a 12-bit mask, matching this project's own 12-bit ADC readings) into
+a running-sum array, and every 4th call, snapshots the accumulated sums
+(right-shifted) into a separate "smoothed output" array, clears the
+accumulator, and sets two "data ready" flags before calling
+`FUN_08002566(..., 1)` (not traced — plausibly signals the knob/CC
+handler that fresh smoothed data is available).
+
+**This independently cross-confirms two things already reverse-engineered
+this project**: the ADC really does sample **16 channels**, matching this
+firmware's revised 8-knobs + 8-pads channel count (`adc.c`'s
+`ADC_TOTAL_CHANNELS`); and the original firmware really does **4x
+oversample** before using a reading, matching `knobs.c`'s
+`OVERSAMPLE_COUNT`. Two independently-designed implementations (the
+original's accumulate-and-shift, this project's sum-and-average)
+converging on the same channel count and oversample factor is a good
+sign this project's earlier, less-certain ADC finding was correct.
+
+### `FUN_08004c90` — likely a device/mode status-byte builder (low-medium confidence)
+
+Complex, only partially traced. Builds an 8-bit value bit-by-bit from
+several one-hot-encoded selector fields (values 1-8 mapped to bits
+`0x01`-`0x80`, in two separate 8-case switches) and multiple 8-iteration
+loops indexed the same way pad-related loops are indexed elsewhere in
+this document. Plausibly the source of the single status byte
+transmitted in `FUN_080044fc`'s device-initiated SysEx message (`F0 47
+00 04 7C 6A 00 04 04 5B 00 07 <byte> F7`) — consistent in shape, not
+independently confirmed. Flagged for follow-up rather than relied on.

@@ -25,6 +25,14 @@
  *    the per-program SysEx record, not yet decoded -- pad_base_note[]
  *    below uses a standard GM-drum-style base (C1=36) as a reasonable
  *    placeholder, not the original's actual defaults.
+ *  - The record layout section of FIRMWARE_ANALYSIS.md ("Major new
+ *    finding: 101-byte per-program record layout") found that each
+ *    pad's config sub-record (record+0x0d + pad*8) can apparently
+ *    select between sending a Note, a Program Change, or a Control
+ *    Change per pad hit, via a shared mode byte -- this module only
+ *    implements the Note case, matching what was already built here.
+ *    Not revisited yet, since the mode-byte's own location isn't
+ *    confirmed.
  */
 #include "pads.h"
 #include "adc.h"
