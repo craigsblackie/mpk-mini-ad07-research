@@ -1,0 +1,400 @@
+# AD07 firmware analysis
+
+Findings from reverse-engineering the extracted, verified firmware image
+(`mpk-mini-full-pass2.bin`, see `FULL_DUMP_PICO.md`). This is original
+analysis in our own words — not raw decompiler output, which is intentionally
+excluded from this repo (see `README.md`).
+
+Method: Ghidra 12.1 headless, `ARM:LE:32:Cortex`, base address `0x08000000`,
+default auto-analysis. Peripheral usage mapped by finding every code
+reference to the address range of each STM32F1 peripheral, then reading the
+containing functions' decompiled output and cross-checking against the raw
+binary bytes directly (not just trusting the decompiler's rendering — see
+"Method notes" below for why that mattered here).
+
+Ghidra project and scripts used: `ghidra-scripts/ExportDecompiled.java`
+(bulk-decompile every function) and `ghidra-scripts/MapPeripheralUsers.java`
+(cross-reference known STM32F1 peripheral base addresses against every
+function that touches them). Both run via `analyzeHeadless`, no GUI needed:
+
+```bash
+/opt/ghidra/support/analyzeHeadless /path/to/ghidra-project MPKMini \
+  -import mpk-mini-full-pass2.bin -processor ARM:LE:32:Cortex \
+  -loader BinaryLoader -loader-baseAddr 0x08000000 \
+  -scriptPath ./ghidra-scripts \
+  -postScript ExportDecompiled.java /path/to/decompiled_full.c
+
+/opt/ghidra/support/analyzeHeadless /path/to/ghidra-project MPKMini \
+  -process mpk-mini-full-pass2.bin -noanalysis \
+  -scriptPath ./ghidra-scripts \
+  -postScript MapPeripheralUsers.java /path/to/peripheral_map.txt
+```
+
+## Confirmed: key/pad matrix scanner — `FUN_080048f4` (flash `0x080048f4`)
+
+A 9-column × 8-row matrix scan with debounce. Verified against raw binary
+bytes at its data table (`0x08004980`), not just the decompiler's rendering:
+
+```
+0x08004980: 00 10 01 40   →  0x40011000  = GPIOC base (column driver)
+0x08004984: a8 6d 00 08   →  0x08006da8  = flash: table of 9× 16-bit column-select patterns
+0x08004988: d0 02 00 20   →  0x200002d0  = SRAM: per-column debounce-state byte array
+0x0800498c: 08 0c 01 40   →  0x40010c08  = GPIOB_IDR (row input register, read directly)
+```
+
+Behavior per scan cycle (9 iterations, one per column):
+
+1. Write `GPIOC_ODR = (GPIOC_ODR & 0xFFFF | 0xFF80) & ~column_mask[i]` — drives
+   the column-select bits, clearing the active column's bit(s) low against a
+   baseline of bits `[15:7]` held high.
+2. Busy-wait delay (~40 loop iterations — settling time for the matrix).
+3. Read `row_byte = GPIOB_IDR[15:8]` (upper byte of GPIOB).
+4. Compare against the previous reading for this column
+   (`last_state[i]` in the SRAM table). If unchanged, increment a per-column
+   stability counter (capped at 0xF0); the **second** consecutive matching
+   read (counter == 1) is what actually gets latched as the debounced
+   result — a 1-sample debounce, i.e. requires the same electrical state on
+   two consecutive scans before it's trusted.
+5. On debounce-confirm: for columns 0–6, stores the inverted row byte into a
+   result buffer at `debounced_result_base[i+3]`. Columns 7 and 8 are
+   special-cased into two extra slots (`+2`, `+1`) — likely because those
+   two columns carry fewer physical inputs (encoders/transport buttons
+   rather than a full 8-key column) and get packed differently.
+6. If the reading *changed* from last time: reset the stability counter to 0
+   and update `last_state[i]` — restarts the debounce window.
+
+This runs guarded behind a single-shot flag (`*guard_byte == 0` at entry,
+set to 1 immediately) — the caller (not yet identified) presumably calls
+this once per main-loop iteration or timer tick, and this flag is likely
+cleared elsewhere to re-arm it; not yet confirmed.
+
+**Confidence: high.** Every address in the parameter table was verified
+against raw binary bytes, not just the decompiler's symbolic rendering (see
+"Method notes" — the auto-decompile alone was unreliable for peripheral
+addresses in this pass).
+
+## Likely: firmware-integrity-checked bootloader entry — `FUN_08001cf0`
+
+Also manipulates GPIOB/GPIOC, but a *different* pattern from the key
+scanner above, and does something much more consequential at the end.
+Lower confidence than the scanner above — flagged for follow-up.
+
+- Drives GPIOC ODR bits (`|= 0xFF80`, `&= ~0x4000`) and reads
+  `~GPIOB_IDR & 0x3FFF) >> 8` with its own debounce loop (up to 99
+  consecutive stable reads, longer than the key scanner's single-sample
+  debounce) — reads *some* specific input, not clearly the same matrix scan.
+- Calls `FUN_08000b68()` — **a checksum routine**: sums `0x77FE` (30,718)
+  bytes starting from a flash pointer, and compares the sum plus a trailing
+  stored value against zero (classic additive checksum-validates-to-zero
+  pattern). This is very likely validating either the whole application
+  image or a specific region (30,718 bytes is suspiciously close to — but
+  not exactly — the ~29 KB of actual non-`0xFF` content this firmware image
+  has; worth reconciling the exact boundary).
+- If the checksum passes (`FUN_08000b68() == 0`) **and** the debounced input
+  read isn't a specific sentinel value (`uVar3 != 8`), calls `FUN_08000728()`.
+- `FUN_08000728()` calls `FUN_08000188()` — which is CMSIS's
+  `__set_MSP`-equivalent (sets the Main Stack Pointer, gated on a
+  privileged-mode check) — **then performs an indirect jump through a
+  function pointer Ghidra couldn't statically resolve** ("could not recover
+  jumptable"). Set-MSP-then-jump is the textbook pattern for handing off
+  execution to a different firmware image or the ST system bootloader.
+
+**Working hypothesis**: this is a "hold a specific key/button while
+powering on, and if the firmware checksum is valid, jump into the DFU/system
+bootloader" mechanism — a standard pattern for user-triggerable firmware
+update mode. Not yet confirmed which physical key/button, nor the exact
+jump target (system memory bootloader at `0x1FFFF000`? a second application
+region?). Worth resolving before relying on this for update-mode design,
+since getting the jump target wrong here would matter for BOOT0/BOOT1
+handling during any future flashing tooling.
+
+## USB device driver — extensive, not yet mapped in detail
+
+References to the USB peripheral (`0x40005C00`+, packet buffer at
+`0x40006000`) span roughly 30+ functions across `0x080002C4`–`0x08006398` —
+this is clearly a full USB device stack (likely the ST Standard Peripheral
+Library's USB-FS-Device driver, given the STM32F102 is the "USB access
+line" part). Not yet individually traced. Next useful step here: locate the
+USB descriptor tables (device/config/interface/endpoint descriptors) in
+flash — these are usually identifiable as a contiguous run of small,
+structured byte sequences (descriptor length byte + descriptor type byte
+pattern) rather than code, and would immediately confirm the exact MIDI
+endpoint numbers/sizes without needing to trace the driver logic.
+
+## RCC / AFIO / clock setup — not detailed, low priority
+
+Heavy but unsurprising RCC usage (peripheral clock enables) and a small
+AFIO footprint (2 functions, GPIO remap — likely remapping the matrix
+scan pins or USART pins off their default locations). Standard init
+boilerplate; not prioritized for detailed analysis since it's not where
+the interesting application logic lives.
+
+## Method notes
+
+**The default auto-decompile pass does not reliably show peripheral
+addresses as literal hex in its C output** — searching the raw decompiled
+text for `0x4001...`-style constants returns almost nothing, even in
+functions that demonstrably do touch those registers. Peripheral base
+addresses are instead loaded from small literal-pool constants in flash
+(the `DAT_08xxxxxx` symbols), and Ghidra's quick auto-analysis doesn't
+always fold those into clean literals in the decompiler's rendering.
+
+**What actually worked**: Ghidra's *reference* database (which instruction
+reads/writes which address) is populated correctly even when the
+decompiler's text rendering isn't clean — cross-referencing known
+peripheral base addresses against `getReferencesTo()` found the right
+functions reliably. Confirming exact semantics then meant reading the raw
+bytes at the flash addresses those functions load their pointers from
+(as done above for the matrix scanner), rather than trusting the
+decompiled C's variable names/structure at face value.
+
+## Confirmed: complete USB MIDI TX pipeline, and the mirror tap point
+
+This is the headline finding of this pass — a fully traced, high-confidence
+path from key-press to USB packet, directly answering what the original
+project objective (`FINDINGS.md`: mirror MIDI events via USART1/PA9 to the
+ESP32-C3) needs to know.
+
+### USB MIDI descriptors (byte-verified, not inferred)
+
+Found the complete USB descriptor tree at flash `0x08001dc6` (a duplicate
+copy also exists at `0x08007071`). Device descriptor's `idVendor`/`idProduct`
+(`0x09E8`/`0x007C`) are a byte-perfect match for the real device as seen by
+`lsusb` earlier in this project — strong independent confirmation this is
+genuinely the right descriptor block, not a coincidental byte pattern.
+
+Standard USB-MIDI (Audio Class 1.0 MIDIStreaming) with 2 bulk endpoints:
+
+| Endpoint | Direction | Max packet | Purpose |
+| --- | --- | --- | --- |
+| `0x01` | OUT (host→device) | 64 | Incoming MIDI (not traced this pass) |
+| `0x81` | IN (device→host) | 64 | **Outgoing MIDI — where key/pad/knob events leave the device** |
+
+Strings confirmed: iManufacturer = `"AKAI PROFESSIONAL,LP"`, iProduct =
+`"MPK mini"`, plus an unindexed-by-standard-fields version string
+`"Ver00.1..."` (likely truncated in this read — worth re-checking, not
+critical).
+
+### The pipeline, traced end to end
+
+```
+FUN_080048f4  matrix scan (9 col × 8 row, debounced)
+      │  writes column debounce-state bytes to SRAM 0x200002d0+
+      ▼
+FUN_08004990  edge detector — diffs new vs. previous debounce state,
+              looks up MIDI note number per (column, bit) from a flash
+              table, builds a 4-byte USB-MIDI event (Note On 0x90 /
+              Note Off 0x80 + note + velocity)
+      │  calls FUN_08006d54(event_bytes, 4)
+      ▼
+FUN_08006d54  ring-buffer PUSH — appends 4 bytes to a 240-byte circular
+              buffer (SRAM 0x200001e0..0x200002d0; control struct at
+              SRAM 0x20000004: byte 0 = count, +4 = write ptr, +8 = read
+              ptr, wraps at base+0xF0). Guards against overflow
+              (won't write if count already 0xF0).
+
+  ... (called periodically, presumably from the main loop — not yet
+       located) ...
+
+FUN_08004c44  TX pump — if EP1 IN isn't busy (EP1R STAT_TX != VALID) and
+              the ring buffer has ≥4 bytes queued, proceeds
+      │  calls FUN_08006cf8(stack_buf, 64)
+      ▼
+FUN_08006cf8  ring-buffer DRAIN — pulls up to 64 bytes from the same
+              circular buffer (mirror image of the push function — same
+              wraparound logic, opposite direction) into a stack buffer;
+              FUN_08004c44 then zero-pads to 64 bytes if fewer were
+              available
+      │  calls FUN_08006398(stack_buf, 64)
+      ▼
+FUN_08006398  low-level USB TX — copies into USB packet memory (PMA) via
+              FUN_0800656c, sets COUNT_TX, and toggles EP1R's STAT_TX
+              bits to VALID (`*EP1R = *EP1R & 0x8FBF ^ 0x30`, the
+              standard STM32 EPnR toggle-bit idiom) — arms the endpoint,
+              hardware sends it on the next USB IN token.
+```
+
+**The mirror tap point is `FUN_08006d54`.** Every call to it is exactly one
+complete, already-formatted 4-byte USB-MIDI event (byte 0 = Cable Number +
+Code Index Number, bytes 1–3 = the actual 1-3 byte MIDI message padded to
+3). Mirroring MIDI to the ESP32-C3 means: at this exact point, also transmit
+the same 4 bytes (or the meaningful 1-3 of them, per Code Index Number) out
+USART1/PA9 — no need to touch USB timing, packetization, or the ring buffer
+logic at all. This confirms the original plan's premise was sound and gives
+the precise, minimal insertion point.
+
+Not yet located: what calls `FUN_08004990` (main loop? confirmed not a
+timer interrupt — see "not yet analyzed"), and whether there's a
+symmetrical RX ring buffer for EP1 OUT (incoming MIDI) using the same
+push/drain pattern — likely, given how systematically this buffer design is
+used, but not confirmed.
+
+`FUN_08004990` itself is large (~470 lines decompiled) and only partially
+traced — the Note On/Off construction is confirmed, but a substantial tail
+of the function (branches on `cVar1 == 'b'`/`'c'`, large table-copy
+sequences) wasn't reached this pass. Worth revisiting; possibly handles
+CC/pitch-bend/aftertouch, or a separate editor-configuration command
+protocol (SysEx from AKAI's editor software, for remapping pads/knobs) that
+happens to share this function.
+
+## Confirmed: the main loop, and MIDI generation is not just keys
+
+`FUN_08006860` is the main loop — a single `do { ... } while(...)` calling,
+in order, every scan/process/pipeline function found so far, gated behind a
+mode flag (`pcVar2[3] == 0`, meaning of the flag not yet determined —
+possibly "not mid-SysEx" or similar):
+
+```
+FUN_08006860 (main loop)
+  FUN_080060ac()                    // one-time init before the loop
+  do {
+    FUN_08004710()                  // unconditional, every iteration
+    if (mode_flag == 0) {
+      FUN_080048f4()                // matrix scan
+      FUN_08004990()                // key edge detector -> Note On/Off
+      FUN_08006988()                // unidentified -- calls ring_push 4x, likely pads
+      FUN_08005734()                // unidentified -- not a ring_push caller
+      FUN_08002588()                // unidentified -- calls ring_push 2x
+      ... (timer/countdown init snippet) ...
+      FUN_08002400()                // unidentified
+      FUN_0800478c()                // unidentified -- calls ring_push 1x
+      FUN_08003ab8()                // unidentified -- calls ring_push 2x
+      FUN_080044fc()                // unidentified -- calls ring_push 1x
+      FUN_08004c90()                // unidentified
+      if (some_state_byte == 0) {
+        FUN_08006d3c()              // ring-buffer housekeeping/status (not push/drain)
+      } else {
+        FUN_08002eac()              // unidentified -- calls ring_push 4x (most active)
+        FUN_08004c44()              // TX pump (only runs in this branch)
+      }
+      ... (further unanalyzed logic) ...
+    }
+  } while (...)
+```
+
+**Important refinement to the tap-point finding above**: `FUN_08006d54`
+(ring-buffer push) is called from **9 different functions**, not just the
+key edge-detector — confirmed via Ghidra's call-reference analysis, not
+just the one path traced initially. This means it's the universal
+choke-point for *all* MIDI output this device generates (keys, and
+whatever `FUN_08006988`, `FUN_08002588`, `FUN_0800478c`, `FUN_08003ab8`,
+`FUN_080044fc`, and `FUN_08002eac` turn out to be — most likely pads,
+knobs/CC, pitch bend, mod wheel, sustain pedal, and/or an arpeggiator,
+not yet individually confirmed). This *strengthens* the tap-point
+conclusion rather than changing it: hooking `FUN_08006d54` still catches
+everything, from every source, with no need to separately hook each
+generator.
+
+Also notable: the TX pump (`FUN_08004c44`) only runs in one branch of a
+runtime state check — the other branch calls only `FUN_08006d3c`
+(presumably ring-buffer housekeeping, not push/drain) instead. Worth
+understanding this gate before assuming the pump always runs every loop
+iteration.
+
+## Candidate: knob/CC handler — `FUN_0800478c` (medium confidence)
+
+Gated behind a flag (`*DAT_080048d8 == 1`, cleared on entry — likely set by
+an ADC-conversion-complete signal). Iterates a table of entries indexed by
+`uVar11`, each entry checked for "enabled" (a non-zero byte at `+0x4D`),
+then reads what look like a CC number and channel (`+0x4E`, `+0x4F`),
+compares a current value against a previous-value array, and on change
+presumably calls `ring_push` with a Control Change message (not fully
+traced into the message-construction tail).
+
+The indexing pattern (`*DAT_080048dc * 0x65 + base`, 0x65 = 101-byte
+stride) recurs across several of these unidentified functions and looks
+like a **per-program configuration record** — consistent with the MPK
+Mini's stored program/bank feature (multiple selectable knob/pad/CC
+mappings). Worth confirming: how many programs are stored, and the exact
+101-byte record layout, since that would directly inform how a
+replacement firmware represents its own mapping config.
+
+## Confirmed: SysEx editor-protocol handler — `FUN_08002eac` (high confidence)
+
+Not a physical-control MIDI generator, despite calling `ring_push` 4 times
+(revising the earlier assumption in this document) — this is the receiver
+for AKAI's editor-software protocol, used by the official "MPK mini
+Editor" desktop app to read/write the device's stored program
+configurations.
+
+- Gated on a flag at `DAT_080032b0[5]` (set elsewhere — presumably when a
+  SysEx message finishes arriving on the OUT endpoint), and a minimum
+  length check (`puVar3[6] > 5`).
+- `*DAT_080032b4 == -0x10` — `0xF0` as a signed byte — checks for the
+  **SysEx start byte**.
+- `DAT_080032b4[1] == 'G'` — a fixed signature byte following SysEx-start
+  (likely part of AKAI's manufacturer ID sequence; the actual AKAI SysEx
+  ID bytes weren't independently confirmed this pass).
+- `DAT_080032b4[3] == '|'` (`0x7C`) — a fixed delimiter/sub-command marker.
+- Command byte at offset 4 selects behavior: `` '`' `` (`0x60`) copies raw
+  payload bytes into a local buffer (likely "dump current program" request
+  handling); `'a'` (`0x61`) triggers a large structured byte-shuffle copy
+  from the SysEx payload into a per-program record at
+  `program_base + program_number*0x65 - 0x1F9` — **the same 101-byte
+  per-program stride** seen in the knob/CC handler (`FUN_0800478c`) above,
+  now confirmed as the format a full program config is transferred in over
+  SysEx, not just an internal detail.
+- A further flag (`puVar3[6] == 'n'`) selects between (at least) two
+  different byte-layout variants for the copy — possibly different
+  protocol/firmware versions, or different record sub-types (e.g. keys
+  vs. pads vs. knobs sent as separate chunks).
+
+**This is a second, independent confirmation of the 101-byte per-program
+record concept**, and identifies the actual wire protocol (SysEx,
+`F0 <?> 'G' <?> '|' <cmd> ...`) a replacement firmware would need to
+either implement (for compatibility with the official editor) or
+deliberately not implement (if replacing the editor entirely with, say, a
+web/BLE config interface via the ESP32-C3). Worth a dedicated follow-up
+pass to fully decode the SysEx command set and the exact 101-byte record
+layout, since together they define the entire user-configuration surface
+of the device.
+
+## Candidates: two more flag-gated handlers, not yet resolved
+
+- `FUN_080044fc`: compares a single status byte against its previous value,
+  branches on individual bits (bit 0, bit 1) of the new value. Small local
+  buffer (~14 bytes, consistent with building one short MIDI message).
+  Plausible candidates: sustain pedal / footswitch input, or joystick
+  button click. Not confirmed.
+- `FUN_08003ab8`: same flag-gated "process when ready" shape as the knob
+  handler (`FUN_0800478c`) and tap-tempo candidate. Not traced deep enough
+  yet to characterize. Plausible candidate given the MPK Mini's control
+  layout: the 4-way joystick (pitch bend + mod wheel), since that's the
+  one remaining major physical control not yet accounted for by the
+  functions above.
+
+## Candidate: tap-tempo / arpeggiator clock — `FUN_08006988` (low confidence)
+
+Takes 4 direct parameters (not a matrix bitmask like the key/pad
+scanners), and computes a rolling average of intervals between edge
+events on what appears to be a single digital input (tap counter,
+interval ring-buffer, average-of-N clamped to a minimum of 250 — classic
+tap-tempo-to-BPM math). Calls `ring_push` 4 times across different
+branches. Not confirmed which physical control this is (no dedicated "TAP
+TEMPO" button is obviously present on this device's layout, so this may
+be a held-button-tap gesture on an existing control, or arpeggiator
+timing derived some other way). Lowest confidence of the functions
+discussed in this document — flagged for follow-up rather than relied on.
+
+## Not yet analyzed
+
+The remaining ~165 of 204 functions, including:
+- The main loop / scheduler — what actually calls the matrix scanner
+  (`FUN_080048f4`), the edge detector (`FUN_08004990`), and the USB TX pump
+  (`FUN_08004c44`), and in what order/timing. No timer peripheral (TIM1–4)
+  references were found anywhere in the peripheral map, which is notable —
+  suggests polling from a plain main loop rather than timer-interrupt-driven
+  scanning, but the loop itself hasn't been located yet.
+- ADC handling for the knobs (only 1 reference each to ADC1/ADC2 found —
+  worth checking, given a device with 8 knobs would be expected to need
+  more ADC activity than that; possibly multiplexed through a single ADC
+  channel-scan, or handled through a mechanism not yet identified).
+- The rest of `FUN_08004990` (see above) — CC/pitch-bend/aftertouch and/or
+  an editor-configuration protocol.
+- Whether there's a symmetrical RX ring buffer for incoming MIDI (EP1 OUT).
+- The 30+ generic USB driver functions (`FUN_08001464` through
+  `FUN_080052c8`/`FUN_08006398` neighborhood) — low priority now that the
+  actual application-level MIDI pipeline is understood; these are
+  standard-library-shaped (SetEPTxStatus-style primitives) and less likely
+  to matter for building replacement firmware than reimplementing the
+  logic already documented above.

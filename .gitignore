@@ -1,0 +1,47 @@
+# Extracted/compiled firmware — AKAI's copyrighted compiled code.
+# Not redistributed here; FULL_DUMP_PICO.md documents how to reproduce
+# a personal backup from your own hardware.
+*.bin
+*.uf2
+*.hex
+*.elf
+
+# Raw Ghidra decompiler output — direct derivative of AKAI's compiled
+# code (unrenamed FUN_* functions, no original analysis yet). Excluded
+# for the same reason as the binaries above; will be reintroduced once
+# transformed into documented, in-our-own-words findings.
+decompiled_full.c
+peripheral_map.txt
+callers.txt
+quick_periph.txt
+ghidra-project/
+
+# Huge OpenOCD session logs from the extraction process — not useful
+# as published artifacts.
+mpk-extractor-pass1.log
+mpk-extractor-pass2.log
+mpk-extractor-openocd-2.log
+
+# Third-party tools cloned during this project — each has its own
+# upstream repo and license; not vendored here. See README.md and
+# FULL_DUMP_PICO.md / RAIDEN_PICO_NEXT.md for the exact clone commands.
+/pico-sdk/
+/raiden-pico/
+/stm32f1-picopwner/
+/stm32f1-firmware-extractor/
+/picopwner-release-a1.2-t1.4/
+
+# Redundant duplicate of the individual PXL_*.jpg photos already in
+# this repo.
+Photos-1-001.zip
+
+# Session scratch artifacts.
+.pico_ctrl
+.pico_run.log
+*.pyc
+__pycache__/
+pa9-test2/*.bin
+pa9-test2/*.elf
+pa9-test2/capture*.bin
+*.o
+firmware/build/
