@@ -106,26 +106,32 @@ very little copper to lose it into:
 | 1N4007 | ~4.2 V | **0.25 W** |
 | 1N5819 | ~4.65 V | 0.38 W |
 
-On the AD07 schematic the USB Mini-B connector CN2 feeds VBUS through ferrite
-bead FB1 into the **+5 V** net, which supplies bulk cap C3, 100 nF C4 and the
-input of U3, an LM1117-3.3. Everything after FB1 is the same net, so tap
-whichever point is easiest to reach:
+On the AD07 schematic the USB Mini-B connector **CN1** feeds VBUS through
+ferrite bead FB1 (CBW451616U851) into the **+5 V** net, which supplies bulk cap
+**C1** (100 uF/10 V), 100 nF **C4**, and the input of **U1**, an LM1117-3.3.
+Everything after FB1 is the same net, so tap whichever point is easiest to
+reach:
 
 | Point | Notes |
 |---|---|
-| **U3 pin 3 (VIN)** | Easiest. SOT-223, 2.3 mm pitch, mechanically solid |
+| **C1 positive pad** | Best target. Largest pad on the net — the bulk electrolytic between FB1 and the regulator input |
+| U1 pin 3 (VIN) | Also easy. SOT-223, 2.3 mm pitch, mechanically solid |
+| FB1 far pad | The end nearest C1 and U1 |
 | C4 pad | Small, but passive pads take solder readily |
-| FB1 far pad | The end nearest C3 and U3 |
-| C3 positive leg | Awkward to reach on an assembled board |
-| CN2 VBUS pin | Upstream of FB1 — see below |
+| C17 positive pad | Upstream of FB1 — see below. Only 1 uF, so a smaller pad |
+| CN1 pin 1 (VBUS) | Upstream of FB1, and fine-pitch |
 
-**U3's metal tab is VOUT (3.3 V), not the input.** It is the most tempting
+**U1's metal tab is VOUT (3.3 V), not the input.** It is the most tempting
 feature on the package and it carries the rail this whole section says not to
 load. Use the small pin.
 
-Tapping CN2's VBUS pin instead puts the ESP upstream of the ferrite, which
+(Designators here are read from the vector schematic in the service manual.
+An earlier revision of this file named C3 and U3, misread from a low-resolution
+raster crop of the same page; there is no C3 on this net.)
+
+Tapping C17 or CN1 pin 1 instead puts the ESP upstream of the ferrite, which
 keeps its switching noise out of the keyboard's filtered rail and off FB1.
-Marginally better in principle, but Mini-B pins are fine-pitch, so it is
+Marginally better in principle, but both are smaller targets than C1, so it is
 usually harder rather than easier. Loading the bead is not a real concern:
 with the transmit power capped the ESP peaks around 150-180 mA on top of the
 keyboard's own draw.
