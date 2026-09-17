@@ -86,11 +86,24 @@ headroom here. Its slow reverse recovery does not matter -- the diode only
 blocks DC backfeed. (The "ME6211 needs 4.3 V" figure quoted in some write-ups
 is specified at 500 mA sustained, which this board cannot dissipate anyway.)
 
-**Check the regulator marking before relying on the editor.** Some SuperMini
-batches ship a 250 mA-peak regulator (SMD marking `LLVB`) rather than the
-500 mA ME6211. An ESP32-C3 transmitting WiFi draws 276 mA or more, so that
-variant will struggle with the editor portal whichever diode is fitted. BLE
-alone is well within either part.
+**Check the regulator marking.** Some SuperMini batches carry an
+**LP5907** (SMD marking `LLVB`) rated 250 mA, rather than the 500 mA ME6211.
+An ESP32-C3 transmitting WiFi draws 276 mA or more, which is over that
+rating, so `editor.c` caps the portal's transmit power to 11 dBm
+(`AP_TX_POWER`). The portal serves one browser in the same room, so the range
+full power buys is worthless while the current spike is not. BLE alone is well
+inside either part.
+
+On an LP5907 board the **1N4007 is the better diode**, which is the opposite
+of the usual advice. Dropout is not the constraint -- the LP5907 needs only
+~120 mV even at full load -- but the regulator dissipates `(Vin - 3.3) x I`,
+so the silicon diode's larger drop moves heat off a SOT-23-5 package that has
+very little copper to lose it into:
+
+| Diode | LDO input | LDO dissipation at 280 mA |
+|---|---|---|
+| 1N4007 | ~4.2 V | **0.25 W** |
+| 1N5819 | ~4.65 V | 0.38 W |
 
 On the AD07 schematic the USB Mini-B connector CN2 feeds VBUS through ferrite
 bead FB1 into the **+5 V** net, which supplies bulk cap C3, 100 nF C4 and the
@@ -105,10 +118,21 @@ transmit peaks would drop 1.7 V across it and add up to half a watt of heat it
 has no budget for. Feeding the `5V` pin instead uses the SuperMini's own
 regulator and leaves the LM1117's load unchanged.
 
-Place the 100 µF capacitor across the SuperMini's `5V` and `GND` pins, close to
+Place the bulk capacitor across the SuperMini's `5V` and `GND` pins, close to
 the board and the right way round, with the 100 nF in parallel if you have one.
 The ESP32-C3's radio draws in bursts and the run back to the MPK's bulk cap is
 long enough to matter.
+
+100 uF is the sensible default. A larger one buffers the radio better, which
+helps on an LP5907 board, but USB 2.0 limits downstream bulk capacitance to
+10 uF per device (spec 7.2.4.1) because charging a big reservoir from cold
+looks like a short: the inrush can trip a host port's over-current protection
+or sag VBUS enough to disturb other devices on the same hub. Plenty of devices
+exceed that limit happily -- if the keyboard enumerates reliably on the port
+you actually use, and nothing else on the bus glitches when you plug it in,
+the larger cap is fine. Otherwise drop back toward 100-220 uF. Do not add
+series resistance to tame the inrush; it would eat the supply headroom the
+diode arithmetic above depends on.
 
 The open firmware already declares the USB 2.0 high-power maximum (500 mA in
 `bMaxPower`) instead of stock's 100 mA, so the combined draw is within what the

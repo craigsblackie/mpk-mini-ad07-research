@@ -16,3 +16,5 @@ static inline esp_err_t esp_wifi_set_config(int i,wifi_config_t*c){(void)i;(void
 static inline esp_err_t esp_wifi_start(void){return 0;}
 static inline esp_err_t esp_wifi_stop(void){return 0;}
 static inline esp_err_t esp_wifi_set_ps(int p){(void)p;return 0;}
+static inline esp_err_t esp_wifi_set_max_tx_power(int8_t p){(void)p;return 0;}
+static inline esp_err_t esp_wifi_get_max_tx_power(int8_t *p){*p=44;return 0;}

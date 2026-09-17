@@ -34,6 +34,19 @@ static const char *TAG = "editor";
 #define AP_CHANNEL  6
 #define AP_MAX_CONN 2
 
+/*
+ * Transmit power cap, in units of 0.25 dBm -- 44 is 11 dBm.
+ *
+ * At full power an ESP32-C3 draws 276 mA or more while transmitting, and
+ * some SuperMini batches regulate with an LP5907 (SMD marking LLVB) rated
+ * for only 250 mA. The portal serves one browser, usually in the same
+ * room as the instrument, so the range full power buys is worthless here
+ * while the current spike is not. Capping to 11 dBm keeps the peak inside
+ * the smaller regulator's rating and costs nothing on boards carrying the
+ * 500 mA part.
+ */
+#define AP_TX_POWER 44
+
 #define RECORD_SIZE   101
 #define HEADER_LEN    8
 #define PROGRAM_MSG   110             /* header + 101 payload + F7 */
@@ -426,9 +439,16 @@ static void portal_start(void)
 	ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
 	ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi));
 	ESP_ERROR_CHECK(esp_wifi_start());
-	/* BLE MIDI keeps running while the portal is up, so leave the radio
-	 * to the coexistence scheduler rather than chasing WiFi throughput. */
+	/* Both of these must follow esp_wifi_start(). BLE MIDI keeps running
+	 * while the portal is up, so leave the radio to the coexistence
+	 * scheduler rather than chasing WiFi throughput. */
 	esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+	esp_err_t power = esp_wifi_set_max_tx_power(AP_TX_POWER);
+	if (power != ESP_OK) ESP_LOGW(TAG, "could not cap TX power: %d", power);
+
+	int8_t actual = 0;
+	if (esp_wifi_get_max_tx_power(&actual) == ESP_OK)
+		ESP_LOGI(TAG, "WiFi TX power %.2f dBm", actual / 4.0);
 
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 	config.uri_match_fn = httpd_uri_match_wildcard;

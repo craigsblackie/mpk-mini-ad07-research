@@ -15,7 +15,8 @@
 /* ---- semaphore + bridge fakes, driven by the test ---- */
 static int mutex_obj, binary_obj;
 static int reply_available;
-int delay_calls;   /* referenced by the shared FreeRTOS stub */
+int delay_calls;      /* referenced by the shared FreeRTOS stub */
+int log_warn_count;   /* referenced by the shared esp_log stub */
 
 /* Stands in for the page the build embeds from editor.html. */
 const uint8_t editor_html_start[] = "<!doctype html><title>t</title>";
