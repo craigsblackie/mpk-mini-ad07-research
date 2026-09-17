@@ -11,18 +11,21 @@
  * per press", which is what this reimplements -- an original take on
  * the same observed behavior, not a transcription of the exact FSM).
  *
+ * CONFIRMED (previously an open question -- see FIRMWARE_ANALYSIS.md's
+ * "Update" note in this section for the full story of tracking this
+ * down): the status byte FUN_080044fc reads (SRAM 0x20000011) is
+ * written by the matrix scanner itself (FUN_080048f4), not a separate
+ * GPIO read or a USB/SysEx-received value as this project worried at
+ * one point. It's specifically matrix **column 8** (0-indexed -- the
+ * 9th and last column, matrix_state[8]) -- not column 7 as this file
+ * originally guessed as a placeholder -- debounced far more heavily
+ * than regular keys (8 consecutive stable reads vs. 2), and bit-
+ * inverted before storage, matching how every other column is stored
+ * in the original (this firmware's matrix.c already made the simpler
+ * choice not to invert anywhere, consistently, so no new discrepancy
+ * here). main.c now passes matrix_state[8], confirmed correct.
+ *
  * NOT YET CONFIRMED (same placeholder-honesty policy as keys.c):
- *  - The actual source of the status byte FUN_080044fc reads.
- *    Disassembling the original against the raw binary (see
- *    FIRMWARE_ANALYSIS.md's "Update" note in this section) resolved its
- *    address to SRAM 0x20000011 -- CONFIRMED NOT part of the matrix
- *    scanner's own result buffers (those live at 0x200002d0+), and
- *    possibly set from a received USB/SysEx command rather than a
- *    physical button at all (the only other reader found also builds
- *    the same device-status SysEx message; no direct GPIO write was
- *    found). main.c still passes matrix_state[7] here as a placeholder
- *    -- now known to be a guess the original doesn't actually do, kept
- *    only because there's no confirmed replacement yet.
  *  - Which specific bit is octave-up vs. octave-down (using bit 3 =
  *    up, bit 2 = down here, matching the doc's bit numbering, but
  *    without confirming which physical button that corresponds to).

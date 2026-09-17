@@ -81,8 +81,8 @@ int main(void)
 		matrix_scan();
 		keys_process();
 		pads_process();
-		/* Placeholder input source -- see buttons.c's header comment. */
-		buttons_process(matrix_state[7]);
+		/* Confirmed source: matrix column 8 -- see buttons.c's header. */
+		buttons_process(matrix_state[8]);
 		knobs_process();
 		stuck_note_process();
 		arp_process();

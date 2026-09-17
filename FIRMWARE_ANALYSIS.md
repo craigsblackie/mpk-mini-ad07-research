@@ -500,21 +500,31 @@ sets it to a nonzero value during normal operation does so through a
 different code path than a simple literal-pool-addressed write — most
 likely computed through a pointer/offset this pass didn't resolve.
 
-This leaves real uncertainty about whether `FUN_080044fc` fires from a
-**physical button** at all, versus a **command byte received over
-USB/SysEx from AKAI's editor software** that happens to also update
-device state and echo a status message back — the two candidate reader
-functions found are both firmware-internal "process this and possibly
-tell the editor about it" shapes, not obviously tied to GPIO/matrix
-input. `firmware/`'s `buttons.c` already flagged its `matrix_state[7]`
-input source as an unconfirmed placeholder before this pass; this
-finding makes that caveat stronger (not just "unconfirmed" but
-"confirmed to not be a direct matrix_state read" in the original),
-without yet supplying a replacement source to point it at. Resolving
-this further would need either live Ghidra data-flow tracing (this
-session's bridge to the analysis tool was unavailable) or empirical
-testing against real hardware (press the octave buttons, see what
-changes).
+This left real uncertainty about whether `FUN_080044fc` fires from a
+**physical button** at all, versus a command byte received over
+USB/SysEx — resolved below once the live Ghidra session came back.
+
+**Resolution**: with live Ghidra access restored, `get_xrefs_to` on
+`0x20000011` immediately found the write this pass's manual binary scan
+had missed — from `08004962`, inside `FUN_080048f4`, **the matrix
+scanner itself**. The earlier scan's assumption (a literal-pool-loaded
+direct store) was too narrow; the real write is a `strb` to a
+register-plus-offset address computed from the scanner's own base
+pointer, a pattern that doesn't show up when grepping the binary for
+the target address as a 32-bit literal.
+
+Reading the scanner's disassembly at that address confirms exactly
+which column: columns 0-6 store their debounced, bit-inverted row byte
+at `base+3+column` (matching this document's matrix scanner section
+above); columns 7 and 8 are special-cased into `base+2` and `base+1`
+respectively, gated behind a much longer 8-consecutive-reads debounce
+(vs. 2 reads for columns 0-6) rather than the shorter one. `base+1` is
+`0x20000011` — so `FUN_080044fc`'s status byte is **matrix column 8**
+(0-indexed — the 9th and last column), a genuine physical input after
+all, just reached through the scanner's column-7/8 special-casing
+rather than a plain `matrix_state[]` read. `firmware/`'s `buttons.c`
+had guessed `matrix_state[7]` as a placeholder; the confirmed source is
+`matrix_state[8]`, now updated there.
 
 ## Revised: pad velocity sensing — `FUN_08003ab8` (medium confidence)
 
