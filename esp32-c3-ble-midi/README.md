@@ -30,7 +30,8 @@ arriving on PA10 into the same handler USB SysEx uses.
 ## Parts
 
 - ESP32-C3 SuperMini (HW-466AB or equivalent), USB-C.
-- 1N5819 Schottky diode (any 1 A Schottky is fine).
+- A 1 A diode: 1N5819 Schottky preferred, but a plain 1N4007 works too --
+  see "Power" for the headroom arithmetic.
 - 100 µF electrolytic capacitor, 10 V or higher.
 - 100 nF ceramic capacitor (optional but recommended).
 - Thin enamelled or silicone wire, 30 AWG or similar, for the two chip pins.
@@ -64,8 +65,32 @@ Take the keyboard's filtered +5 V rail, not its 3.3 V rail:
 
 | MPK mini | Protection | ESP32-C3 SuperMini |
 |---|---|---|
-| +5 V net (see below) | 1N5819, anode to MPK, striped cathode to ESP | `5V` |
+| +5 V net (see below) | 1 A diode, anode to MPK, striped cathode to ESP | `5V` |
 | GND | direct | `GND` |
+
+The diode is not optional. The SuperMini's `5V` pin is wired **directly** to its
+USB-C VBUS with no reverse protection on the board, so without it, plugging in
+USB-C while the keyboard is powered puts two supplies on one node.
+
+Either diode type works, because the SuperMini regulates with an **ME6211C33**,
+a true low-dropout part -- 120 mV at 100 mA, 260 mV at 200 mA, so it needs only
+about 3.7 V in even at the ~300 mA the radio peaks at:
+
+| Diode | Forward drop | Left at `5V` from 5 V | Margin at WiFi peak |
+|---|---|---|---|
+| 1N5819 Schottky | ~0.35 V | ~4.65 V | ~0.95 V |
+| 1N4007 silicon | ~0.8 V | ~4.2 V | ~0.5 V |
+
+The Schottky is the better part and costs the same, but a 1N4007 has enough
+headroom here. Its slow reverse recovery does not matter -- the diode only
+blocks DC backfeed. (The "ME6211 needs 4.3 V" figure quoted in some write-ups
+is specified at 500 mA sustained, which this board cannot dissipate anyway.)
+
+**Check the regulator marking before relying on the editor.** Some SuperMini
+batches ship a 250 mA-peak regulator (SMD marking `LLVB`) rather than the
+500 mA ME6211. An ESP32-C3 transmitting WiFi draws 276 mA or more, so that
+variant will struggle with the editor portal whichever diode is fitted. BLE
+alone is well within either part.
 
 On the AD07 schematic the USB Mini-B connector CN2 feeds VBUS through ferrite
 bead FB1 into the **+5 V** net, which supplies bulk cap C3, 100 nF C4 and the
@@ -84,10 +109,6 @@ Place the 100 µF capacitor across the SuperMini's `5V` and `GND` pins, close to
 the board and the right way round, with the 100 nF in parallel if you have one.
 The ESP32-C3's radio draws in bursts and the run back to the MPK's bulk cap is
 long enough to matter.
-
-The diode stops the SuperMini's own USB-C VBUS from back-feeding the MPK while
-you are reflashing it. Its ~0.35 V drop leaves about 4.65 V at the `5V` pin,
-comfortably above the onboard regulator's dropout.
 
 The open firmware already declares the USB 2.0 high-power maximum (500 mA in
 `bMaxPower`) instead of stock's 100 mA, so the combined draw is within what the
