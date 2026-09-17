@@ -71,11 +71,13 @@ static void init_one(program_record_t *p, uint8_t base_cc)
 		p->raw[base + OFF_PAD_PC] = (uint8_t)pad;          /* placeholder */
 		p->raw[base + OFF_PAD_CC] = (uint8_t)(base_cc + pad); /* placeholder */
 	}
-	p->pad_mode = PAD_MODE_NOTE;
 }
+
+static uint8_t pad_output_mode; /* shared runtime state, not per-program -- see program.h */
 
 void program_init(void)
 {
+	pad_output_mode = PAD_MODE_NOTE;
 	current_program = 0;
 	for (int i = 0; i < PROGRAM_COUNT; i++) {
 		init_one(&programs[i], 70);
@@ -171,7 +173,12 @@ uint8_t program_pad_cc(uint8_t pad)
 
 uint8_t program_pad_mode(void)
 {
-	return programs[current_program].pad_mode;
+	return pad_output_mode;
+}
+
+void program_set_pad_mode(uint8_t mode)
+{
+	pad_output_mode = mode;
 }
 
 /*

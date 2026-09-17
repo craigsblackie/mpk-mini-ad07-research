@@ -1182,3 +1182,35 @@ self-invented placeholder formula), `transport.c` implements column
 trigger, and `arp.c` gained `arp_tap()` (a simplified single-interval
 tap tempo, not the original's N-tap rolling average, but the same
 real feature).
+
+## Column 8's real purpose resolved: pad output mode select
+
+Re-reading `FUN_080044fc` in full (it had only been partially read
+before) and cross-referencing its state variable via `get_xrefs_to`
+resolves what this document's earlier "octave/program buttons" guess
+never confirmed: **`DAT_080045c0+2` (SRAM `0x20000023`) is read by
+`FUN_08003ab8`** (the pad-velocity handler, as `*DAT_08003e18` — the
+same address under a different literal-pool alias, confirmed by the
+read count matching: two reads in each function's own disassembly) —
+**the shared runtime "pad output mode" variable** this document
+already knew `FUN_08003ab8` consults (Note=1/CC=2/PC=3) but hadn't
+traced back to a writer.
+
+**Column 8's buttons are that variable's writers**, with confirmed
+toggle logic: bit 2 toggles pad mode between CC and Note (if currently
+CC, back to Note; otherwise to CC); bit 3 does the same for Program
+Change. Bit 1 sets a local flag and a sentinel byte; bit 0 is the
+complement/idle case clearing that flag — both real, but their further
+effect wasn't traced (consumed by functions this project hasn't
+identified).
+
+This retires this document's "Revised: column-8 buttons" section's
+octave interpretation for good — it wasn't the octave buttons (column
+7 is, see above) and it wasn't a pedal (the original earlier guess);
+it's the pad note/CC/PC mode selector, cross-confirmed from both the
+writer (this function) and the reader (`FUN_08003ab8`) sides.
+
+**Implemented in `firmware/`**: `program.c`'s pad-mode storage changed
+from a (never-confirmed) per-program field to the confirmed shared
+runtime variable it actually is, with a new `program_set_pad_mode()`.
+`buttons.c` rewritten to implement the confirmed bit 2/3 toggle logic.

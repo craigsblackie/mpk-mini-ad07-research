@@ -37,8 +37,9 @@
  *    approximates a reasonable behavior (CC value 0 on release, PC
  *    fires once on hit only) rather than the original's exact bytes,
  *    which weren't fully traced for those two branches.
- *  - Whether the pad output mode is genuinely per-program stored data
- *    at all -- see program.c's program_pad_mode() comment.
+ *  - Pad output mode is CONFIRMED not per-program stored data --
+ *    a shared runtime variable, set by matrix column 8's buttons
+ *    (buttons.c) -- see program.c's program_pad_mode() comment.
  */
 #include "pads.h"
 #include "adc.h"

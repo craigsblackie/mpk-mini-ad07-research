@@ -47,12 +47,12 @@
  * program.h). This replaces an earlier, self-invented placeholder
  * formula (`keys_base_note + key_index + buttons_octave_offset*12`)
  * that predated finding the original's real one. `program_octave()`
- * is live-adjustable by transport.c's octave buttons (matrix column
- * 7, confirmed -- see transport.c), which is now believed to be the
- * *real* octave up/down control; buttons.c's column-8 mechanism, this
- * project's earlier guess at "the" octave buttons, is left implemented
- * but no longer wired into note pitch -- see buttons.c's header for
- * the reinterpretation.
+ * is live-adjustable by transport.c's octave buttons (matrix column 7,
+ * confirmed -- see transport.c) -- the real octave up/down control.
+ * The column-8 buttons this project originally guessed were "the"
+ * octave buttons turned out to be something else entirely (pad output
+ * mode select -- see buttons.c), now resolved and unrelated to note
+ * pitch.
  */
 #include "keys.h"
 #include "matrix.h"

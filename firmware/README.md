@@ -110,11 +110,15 @@ land.
   earlier guess (see next entry). A third button does a literal
   `record[4] = (record[4] == 0)` on release — an unambiguous **arp
   on/off toggle**. Tap tempo feeds `arp.c`'s `arp_tap()`.
-- **Matrix column 8 buttons** (`src/buttons.c`): still implemented (the
-  input-reading mechanism is confirmed real — matrix column 8), but no
-  longer believed to be octave buttons, and no longer wired into note
-  pitch — see `buttons.c`'s header for the reinterpretation. Its real
-  purpose is an open question again.
+- **Matrix column 8: pad output mode select** (`src/buttons.c`): real
+  purpose now **resolved** — not octave buttons after all. Cross-
+  referencing its state variable (`get_xrefs_to`) against `pads.c`'s
+  already-confirmed "pad output mode" runtime variable (Note/CC/PC)
+  shows column 8's buttons are that variable's writers: one button
+  toggles CC mode on/off, another toggles Program Change mode on/off
+  (both relative to Note). `program.c`'s pad-mode storage changed from
+  a never-confirmed per-program field to the shared runtime variable
+  it's actually confirmed to be.
 - **Stuck-note safety net** (`src/stuck_note.c`): reimplements the
   original's 8-slot timeout mechanism — force-sends a Note Off for any
   key/pad note that's been held too long without a matching release.
@@ -184,7 +188,9 @@ land.
 - **Exact per-knob/per-pad ADC channel assignment within each confirmed
   8-channel group** (see caveats above) — the channel *ranges* are
   schematic-confirmed, the *order within* them isn't.
-- **Matrix column 8's real purpose** — reopened, see `buttons.c`.
+- **Matrix column 8 bits 0/1** — a local flag and sentinel byte are set
+  but their further effect (consumed by functions this project hasn't
+  identified) isn't reimplemented. Bits 2/3 (pad mode select) *are*.
 - **Matrix column 7 bit 3** — entangled with arp-hold-array reset logic
   in the original, not resolved with enough confidence to reimplement
   (see `transport.c`'s header). Bit 0 (arp toggle) and bit 1 (tap

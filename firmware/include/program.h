@@ -22,11 +22,6 @@
 
 typedef struct {
 	uint8_t raw[PROGRAM_RECORD_SIZE];
-	/* NOT part of the original's own 101-byte record -- see
-	 * program_pad_mode()'s comment below. Kept alongside raw[] rather
-	 * than inside it so raw[] stays an exact match to the original's
-	 * confirmed layout. */
-	uint8_t pad_mode;
 } program_record_t;
 
 extern program_record_t programs[PROGRAM_COUNT];
@@ -97,15 +92,19 @@ uint8_t program_pad_note(uint8_t pad);
 uint8_t program_pad_pc(uint8_t pad);
 uint8_t program_pad_cc(uint8_t pad);
 
-/* NOT part of the confirmed per-program record -- the original reads
- * this from a single shared runtime variable (*DAT_08003e18 in
- * FIRMWARE_ANALYSIS.md's pad velocity section), not obviously indexed
- * by program. Stored here per-program anyway for architectural
- * consistency with how record+0x04's arp flag is cached into runtime
- * state on program change (FUN_08005734's confirmed pattern) --
- * genuinely uncertain whether the original does the same for this
- * field. Returns PAD_MODE_NOTE/CC/PC. */
+/* CONFIRMED NOT part of the per-program record -- a single shared
+ * runtime variable (SRAM 0x20000023), confirmed via get_xrefs_to: read
+ * by FUN_08003ab8 (pad velocity, as `*DAT_08003e18` -- the same
+ * address under a different literal-pool alias) and written by matrix
+ * column 8's buttons (`FUN_080044fc`, as `DAT_080045c0+2` -- see
+ * buttons.c). This resolves buttons.c's real purpose: its bit 2/3
+ * buttons toggle this between PAD_MODE_CC/PAD_MODE_PC and
+ * PAD_MODE_NOTE (press to enter that mode, press again to return to
+ * Note) -- the actual real-world feature this project had been
+ * guessing at as "octave buttons" before column 7 was traced. Returns
+ * PAD_MODE_NOTE/CC/PC. */
 uint8_t program_pad_mode(void);
+void program_set_pad_mode(uint8_t mode);
 
 /*
  * SysEx wire <-> record conversion.
