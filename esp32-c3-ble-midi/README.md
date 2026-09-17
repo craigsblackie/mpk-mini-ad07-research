@@ -108,9 +108,31 @@ very little copper to lose it into:
 
 On the AD07 schematic the USB Mini-B connector CN2 feeds VBUS through ferrite
 bead FB1 into the **+5 V** net, which supplies bulk cap C3, 100 nF C4 and the
-input of U3, an LM1117-3.3. Tap that net — the positive leg of C3 or the U3
-input pin are the two convenient points. It is filtered but upstream of the
-regulator.
+input of U3, an LM1117-3.3. Everything after FB1 is the same net, so tap
+whichever point is easiest to reach:
+
+| Point | Notes |
+|---|---|
+| **U3 pin 3 (VIN)** | Easiest. SOT-223, 2.3 mm pitch, mechanically solid |
+| C4 pad | Small, but passive pads take solder readily |
+| FB1 far pad | The end nearest C3 and U3 |
+| C3 positive leg | Awkward to reach on an assembled board |
+| CN2 VBUS pin | Upstream of FB1 — see below |
+
+**U3's metal tab is VOUT (3.3 V), not the input.** It is the most tempting
+feature on the package and it carries the rail this whole section says not to
+load. Use the small pin.
+
+Tapping CN2's VBUS pin instead puts the ESP upstream of the ferrite, which
+keeps its switching noise out of the keyboard's filtered rail and off FB1.
+Marginally better in principle, but Mini-B pins are fine-pitch, so it is
+usually harder rather than easier. Loading the bead is not a real concern:
+with the transmit power capped the ESP peaks around 150-180 mA on top of the
+keyboard's own draw.
+
+**Verify before soldering.** Power the keyboard and measure between the chosen
+point and CN3 pin 1. About 5 V means the right net; about 3.3 V means the
+regulator's output side, so move.
 
 Do **not** feed the SuperMini's `3V3` pin from the MPK's 3.3 V rail. That rail
 comes from the LM1117, a linear regulator in a small SMD package inside a
