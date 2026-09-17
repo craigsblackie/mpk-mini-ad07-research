@@ -7,6 +7,7 @@
  * project's startup file has) -- not copied from the original firmware.
  */
 #include <stdint.h>
+#include "bootloader.h"
 
 extern uint32_t _estack;
 extern uint32_t _etext, _sdata, _edata, _sbss, _ebss;
@@ -69,6 +70,8 @@ void Reset_Handler(void)
 	while (dst < &_ebss) {
 		*dst++ = 0;
 	}
+
+	bootloader_check_entry();
 
 	main();
 

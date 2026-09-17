@@ -52,6 +52,18 @@ land.
   against RM0008 this session.
 - Startup code, vector table, linker script: standard Cortex-M3/STM32F1
   boilerplate, the same shape as any STM32F1 project.
+- **DFU/bootloader entry at power-on** (`src/bootloader.c`): hold a
+  button in the matrix's column-7 cluster while powering on to jump
+  into ST's system-memory bootloader instead of booting normally —
+  confirmed as a real original feature by tracing `FUN_08001cf0` back
+  to a call site right after the vector table, before any of the
+  original's own peripheral init runs. Called from `Reset_Handler`
+  before `main()`, matching that timing. The system-memory jump address
+  (`0x1FFFF000`) is ST's standard, documented value for this chip
+  family, not reverse-engineered; the trigger condition (any button in
+  that column, debounced) is a clean reimplementation of the same
+  feature rather than a byte-exact port — see `bootloader.c`'s header
+  for the exact caveat. **Not yet tested on real hardware.**
 - **Millisecond timebase** (`src/systick.c`): standard Cortex-M3 SysTick
   setup, 1ms ticks off the 48 MHz SYSCLK. Not derived from the
   original's disassembly — the original *does* configure SysTick

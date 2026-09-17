@@ -73,40 +73,50 @@ against raw binary bytes, not just the decompiler's symbolic rendering (see
 "Method notes" — the auto-decompile alone was unreliable for peripheral
 addresses in this pass).
 
-## Likely: firmware-integrity-checked bootloader entry — `FUN_08001cf0`
+## Confirmed: bootloader/DFU entry at boot — `FUN_08001cf0` (high confidence)
 
 Also manipulates GPIOB/GPIOC, but a *different* pattern from the key
 scanner above, and does something much more consequential at the end.
-Lower confidence than the scanner above — flagged for follow-up.
 
-- Drives GPIOC ODR bits (`|= 0xFF80`, `&= ~0x4000`) and reads
-  `~GPIOB_IDR & 0x3FFF) >> 8` with its own debounce loop (up to 99
-  consecutive stable reads, longer than the key scanner's single-sample
-  debounce) — reads *some* specific input, not clearly the same matrix scan.
+- Drives GPIOC ODR bits (`|= 0xFF80`, `&= ~0x4000`) — the `0x4000` bit
+  is **column 7** (`column_mask[7]` in this document's matrix scanner
+  section) — and reads `(~GPIOB_IDR & 0x3FFF) >> 8` with its own
+  debounce loop (up to 99 consecutive stable reads, longer than the key
+  scanner's single-sample debounce).
 - Calls `FUN_08000b68()` — **a checksum routine**: sums `0x77FE` (30,718)
   bytes starting from a flash pointer, and compares the sum plus a trailing
   stored value against zero (classic additive checksum-validates-to-zero
-  pattern). This is very likely validating either the whole application
-  image or a specific region (30,718 bytes is suspiciously close to — but
-  not exactly — the ~29 KB of actual non-`0xFF` content this firmware image
-  has; worth reconciling the exact boundary).
-- If the checksum passes (`FUN_08000b68() == 0`) **and** the debounced input
-  read isn't a specific sentinel value (`uVar3 != 8`), calls `FUN_08000728()`.
-- `FUN_08000728()` calls `FUN_08000188()` — which is CMSIS's
-  `__set_MSP`-equivalent (sets the Main Stack Pointer, gated on a
-  privileged-mode check) — **then performs an indirect jump through a
-  function pointer Ghidra couldn't statically resolve** ("could not recover
-  jumptable"). Set-MSP-then-jump is the textbook pattern for handing off
-  execution to a different firmware image or the ST system bootloader.
+  pattern). Very likely validating the application image before it's
+  considered safe to jump away from.
+- If the checksum passes (`FUN_08000b68() == 0`) **and** the debounced
+  column-7 row read isn't a specific sentinel value (`uVar3 != 8`, its
+  exact meaning as an "idle" pattern not resolved), calls
+  `FUN_08000728()` → `FUN_08000188()` (CMSIS `__set_MSP`-equivalent)
+  then jumps through a function pointer Ghidra couldn't statically
+  resolve. Set-MSP-then-jump is the textbook pattern for handing off to
+  a different firmware image or the ST system bootloader.
 
-**Working hypothesis**: this is a "hold a specific key/button while
-powering on, and if the firmware checksum is valid, jump into the DFU/system
-bootloader" mechanism — a standard pattern for user-triggerable firmware
-update mode. Not yet confirmed which physical key/button, nor the exact
-jump target (system memory bootloader at `0x1FFFF000`? a second application
-region?). Worth resolving before relying on this for update-mode design,
-since getting the jump target wrong here would matter for BOOT0/BOOT1
-handling during any future flashing tooling.
+**Confirmed this runs at the very start of reset**, before any of the
+application's own peripheral init: `get_xrefs_to` traces
+`FUN_08001cf0` → called unconditionally from `FUN_08001cd6` → called
+from a computed-call thunk at flash `0x0800013a`, right after the
+vector table. This is a genuine "hold a button in the column-7 cluster
+while powering on, and if the firmware checksum is valid, jump into
+the DFU/system bootloader" feature — a standard user-triggerable
+firmware-update-mode pattern, running before `main()` even starts.
+
+**Implemented in `firmware/bootloader.c`**, called from
+`Reset_Handler` before `main()`, matching the original's timing. The
+jump itself uses the standard, documented STM32F101/F102/F103
+medium-density system-memory bootloader address (`0x1FFFF000`, per
+ST's AN2606) rather than anything reverse-engineered — that part needed
+no guessing. What's reimplemented rather than ported exactly: the
+trigger condition (any button in the column-7 cluster held, debounced
+with clean pull-ups this firmware configures itself, rather than
+replicating the exact `!= 8` sentinel comparison against the original's
+specific pull configuration) and the checksum gate is not reimplemented
+at all (there's no analogous "is my own image corrupt" check that makes
+sense for firmware already running and about to voluntarily jump away).
 
 ## USB device driver — extensive, not yet mapped in detail
 
