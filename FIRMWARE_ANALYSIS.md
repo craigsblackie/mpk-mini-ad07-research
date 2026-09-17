@@ -499,10 +499,9 @@ is now more plausibly 8 knobs + 8 pad-velocity-sense channels, not 8
 knobs + unused headroom as originally guessed.
 
 **Net effect on the joystick question**: neither of these two functions
-is the pitch/mod joystick after all — that control's handling function
-remains unidentified. Worth a fresh targeted search (e.g. for a function
-reading exactly 2 additional ADC-style channels with bipolar/centered
-scaling, characteristic of pitch bend).
+is a pitch/mod joystick handler — and, as established below, there is no
+such control on this hardware to find. The "8 knobs + 8 pad-velocity"
+channel split above accounts for the ADC scan in full.
 
 ## Candidate: tap-tempo / arpeggiator clock — `FUN_08006988` (low confidence)
 
@@ -517,7 +516,7 @@ be a held-button-tap gesture on an existing control, or arpeggiator
 timing derived some other way). Lowest confidence of the functions
 discussed in this document — flagged for follow-up rather than relied on.
 
-## Two more `ring_push` callers identified — neither is the joystick
+## Two more `ring_push` callers identified, completing the call graph
 
 Completing the trace of every direct caller of `FUN_08006d54` (there are
 8 distinct ones total):
@@ -535,36 +534,57 @@ Completing the trace of every direct caller of `FUN_08006d54` (there are
   Note Off via `ring_push`. Reads as a timeout/safety mechanism ensuring
   notes don't stay stuck on. Medium confidence.
 
-**Neither is the pitch/mod joystick.** All 8 direct `ring_push` callers
-are now accounted for, and none matches the bipolar/centered-scaling
-signature expected of pitch bend. The obvious next lead — checking the
-key edge-detector (`FUN_08004990`) for an untraced tail that might fold
-in joystick handling — turned out to be based on an earlier bookkeeping
-error in this document (see the correction in that function's section
-above): it's fully traced already and doesn't contain it. **The joystick
-handler's location is genuinely unresolved as of this pass** — every
-function known to reach `ring_push`, directly or via the one function
-believed to have unread content, has now been checked. Finding it needs
-either a fresh search strategy (e.g. looking for bipolar-centered ADC
-scaling logic directly, independent of the `ring_push` call graph, in
-case pitch/mod events are queued some other way) or accepting it may not
-be reachable through static analysis alone this session.
+**Correction: there is no pitch/mod joystick on this hardware at all.**
+The search for one across this document (including the disproven
+`FUN_08004990` lead above) was chasing a false premise, carried over from
+generic MPK Mini product knowledge — later hardware revisions have a
+4-way joystick, but this Gen 1/AD07 unit does not. Confirmed directly
+against a photo of the actual device. The real control set is: 25 keys,
+8 pads, 8 knobs, and a small cluster of buttons (octave up/down, program
+up/down, and others) — no analog pitch/mod control at all. With that
+premise removed, all 8 `ring_push` callers are now fully and correctly
+accounted for:
+
+| Function | Identified as |
+| --- | --- |
+| `FUN_080048f4` | Key/pad matrix scanner |
+| `FUN_08004990` | Key edge detector → Note On/Off |
+| `FUN_0800478c` | Knob → CC |
+| `FUN_08003ab8` | Pad velocity sensing |
+| `FUN_080044fc` | Octave buttons + device-initiated SysEx status |
+| `FUN_08002eac` | SysEx editor-protocol handler |
+| `FUN_08002588` | Arpeggiator step sequencer (likely) |
+| `FUN_08005188` | Stuck-note/pad-off cleanup (likely) |
+| `FUN_08006988` | Tap-tempo/arpeggiator clock (still lowest confidence — see above; possibly a held-gesture on the program or octave buttons rather than a dedicated control) |
+
+**Practical implication for the replacement firmware**: no joystick/pitch-
+bend/mod-wheel support needs implementing at all — `firmware/`'s existing
+scope (keys, pads not yet implemented, knobs, and the octave/program
+buttons not yet implemented) already covers the complete real control
+surface of this device.
 
 ## Not yet analyzed
 
-The remaining ~165 of 204 functions, including:
+The remaining ~165 of 204 functions. Several items originally listed here
+have since been resolved (superseded, struck below) as later sections of
+this document worked through them:
+
+- ~~ADC handling for the knobs (only 1 reference each to ADC1/ADC2 found)~~
+  — resolved: ADC1 + DMA1 in continuous scan mode, addresses stored as
+  data and dereferenced at runtime rather than embedded as literal
+  instruction operands, which is why the initial reference search came up
+  empty. See this document's ADC/DMA section.
+- ~~The rest of `FUN_08004990` — CC/pitch-bend/aftertouch~~ — resolved:
+  no such remainder exists (see the correction above; the function is
+  fully traced at 157 lines), and there is no pitch-bend/joystick control
+  on this hardware to find in the first place (confirmed against a photo
+  of the real device).
 - The main loop / scheduler — what actually calls the matrix scanner
   (`FUN_080048f4`), the edge detector (`FUN_08004990`), and the USB TX pump
   (`FUN_08004c44`), and in what order/timing. No timer peripheral (TIM1–4)
   references were found anywhere in the peripheral map, which is notable —
   suggests polling from a plain main loop rather than timer-interrupt-driven
   scanning, but the loop itself hasn't been located yet.
-- ADC handling for the knobs (only 1 reference each to ADC1/ADC2 found —
-  worth checking, given a device with 8 knobs would be expected to need
-  more ADC activity than that; possibly multiplexed through a single ADC
-  channel-scan, or handled through a mechanism not yet identified).
-- The rest of `FUN_08004990` (see above) — CC/pitch-bend/aftertouch and/or
-  an editor-configuration protocol.
 - Whether there's a symmetrical RX ring buffer for incoming MIDI (EP1 OUT).
 - The 30+ generic USB driver functions (`FUN_08001464` through
   `FUN_080052c8`/`FUN_08006398` neighborhood) — low priority now that the
