@@ -478,6 +478,12 @@ static void portal_start(void)
 	config.max_uri_handlers = 10;
 	config.stack_size = 5120;
 	config.lru_purge_enable = true;
+	/* httpd needs max_open_sockets + 3 internal sockets to fit inside
+	 * CONFIG_LWIP_MAX_SOCKETS, and the default asks for more than this
+	 * build allows -- it refuses to start otherwise. One browser opening
+	 * a handful of parallel requests is all this portal serves, and
+	 * lru_purge_enable recycles the oldest when they run out. */
+	config.max_open_sockets = 4;
 	if (httpd_start(&server, &config) != ESP_OK) {
 		ESP_LOGE(TAG, "HTTP server failed to start");
 		esp_wifi_stop();

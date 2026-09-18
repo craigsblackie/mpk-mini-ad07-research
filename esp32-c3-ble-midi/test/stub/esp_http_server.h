@@ -11,7 +11,7 @@ typedef struct httpd_req {
 	char resp[4096]; size_t resp_len; char status[40]; int sent;
 } httpd_req_t;
 typedef bool (*httpd_uri_match_func_t)(const char*, const char*, size_t);
-typedef struct { httpd_uri_match_func_t uri_match_fn; int max_uri_handlers, stack_size; bool lru_purge_enable; } httpd_config_t;
+typedef struct { httpd_uri_match_func_t uri_match_fn; int max_uri_handlers, stack_size, max_open_sockets; bool lru_purge_enable; } httpd_config_t;
 typedef struct { const char *uri; int method; esp_err_t (*handler)(httpd_req_t*); } httpd_uri_t;
 static inline bool httpd_uri_match_wildcard(const char*a,const char*b,size_t c){(void)a;(void)b;(void)c;return true;}
 static inline esp_err_t httpd_start(httpd_handle_t*h,httpd_config_t*c){(void)h;(void)c;return 0;}
