@@ -309,10 +309,12 @@ a board that wires it elsewhere.
 ## Editor portal
 
 The bridge already speaks the keyboard's editor SysEx, so it can host the
-editor itself. Press the SuperMini's **BOOT** button: it raises a WiFi access
-point and serves a single-page editor. No driver, no host application, and
-nothing that depends on the discontinued AKAI editor still running on a
-current OS.
+editor itself. Hold the keyboard's **PROGRAM** button for two seconds (or
+press the SuperMini's **BOOT** button): it raises a WiFi access point and
+serves a single-page editor. The same gesture shuts it down again. A short
+PROGRAM press and PROGRAM+key program selection keep their normal behavior.
+No driver, no host application, and nothing that depends on the discontinued
+AKAI editor still running on a current OS.
 
 | | |
 |---|---|
@@ -320,12 +322,12 @@ current OS.
 | Password | `mpkmini1` |
 | Address | `http://192.168.4.1/` |
 
-Press BOOT again to shut the portal down. It is **off by default and not
-persistent** -- it never comes up on its own, because an idle AP would share
-the one 2.4 GHz antenna with BLE for no benefit and would roughly double the
-bridge's draw on a supply taken from the keyboard's USB rail. BLE MIDI keeps
-working while the portal is up; software coexistence is enabled for exactly
-this overlap.
+Hold PROGRAM again (or press BOOT again) to shut the portal down. It is **off
+by default and not persistent** -- it never comes up on its own, because an
+idle AP would share the one 2.4 GHz antenna with BLE for no benefit and would
+roughly double the bridge's draw on a supply taken from the keyboard's USB
+rail. BLE MIDI keeps working while the portal is up; software coexistence is
+enabled for exactly this overlap.
 
 The editor covers the MIDI and pad channels, octave and transpose, the full
 arpeggiator page, all eight pads across both banks (note, CC, program change,

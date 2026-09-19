@@ -28,6 +28,8 @@ and retains the unit's original 8 KiB updater at `0x08000000`.
   PA9/PA10, while the normal USB MIDI connection remains active. The bridge's
   own firmware, wiring and keyboard-powered supply are in
   `../esp32-c3-ble-midi/`.
+- A two-second hold of PROGRAM toggles the ESP32-hosted WiFi editor. Short
+  PROGRAM presses and PROGRAM+key selection retain their normal behavior.
 - Five 101-byte program records (scratch plus four persistent programs), the
   stock flash-page layout, validation rules, defaults, and current-program
   marker.
@@ -74,8 +76,9 @@ cd test && make check
 
 This checks every velocity curve is monotonic, stays inside 1..127, anchors at
 127, and never mutes a note; that `Linear` passes all 127 inputs through
-untouched; and that the settings block still fits the flash page it shares with
-the program store.
+untouched; that the settings block still fits the flash page it shares with
+the program store; and that the PROGRAM long-hold gesture fires once without
+interfering with PROGRAM+key selection.
 
 This requires `arm-none-eabi-gcc`. The outputs are:
 

@@ -7,6 +7,7 @@
 int log_warn_count;
 int64_t fake_us;
 int delay_calls;
+int task_notify_give_count;
 
 /* main.c taps completed SysEx for the editor and asks whether the portal
  * is up when painting the LED. Neither is under test here -- the editor
@@ -83,6 +84,7 @@ static void reset_all(void)
 	uart_out_len = 0;
 	notify_attempts = 0;
 	log_warn_count = 0;
+	task_notify_give_count = 0;
 	connection_handle = 0;
 	midi_value_handle = 1;
 	notifications_enabled = true;
@@ -123,6 +125,26 @@ static void check(const char *name, const uint8_t *in, size_t in_len,
 
 int main(void)
 {
+	/* The keyboard's private PROGRAM-hold command toggles the editor task and
+	 * must not leak through as BLE MIDI. */
+	reset_all();
+	editor_control_task_handle = (void *)1;
+	{
+		uint8_t command[] = {0xf0,0x7d,'M','P','K',0x01,0xf7};
+		for (size_t i = 0; i < sizeof command; i++)
+			uart_parser_byte(&uart_parser, command[i]);
+		ble_midi_drain();
+		if (task_notify_give_count != 1 || pkt_count != 0 || out_used() != 0) {
+			printf("FAIL %-28s notify=%d packets=%d queued=%u\n",
+			       "PROGRAM hold command", task_notify_give_count, pkt_count,
+			       (unsigned)out_used());
+			failures++;
+		} else {
+			printf("ok   %-28s consumed locally, toggle requested\n",
+			       "PROGRAM hold command");
+		}
+	}
+
 	/* 1. Plain channel messages, all distinct statuses. */
 	reset_all();
 	{

@@ -10,10 +10,14 @@ CFLAGS = -std=gnu11 -Wall -Wextra -fsanitize=address,undefined -I../include
 velocity_test: velocity_test.c ../src/velocity.c ../include/velocity.h
 	$(CC) $(CFLAGS) velocity_test.c ../src/velocity.c -lm -o $@
 
-check: velocity_test
+transport_test: transport_test.c ../src/transport.c ../include/transport.h
+	$(CC) $(CFLAGS) transport_test.c ../src/transport.c -o $@
+
+check: velocity_test transport_test
 	./velocity_test
+	./transport_test
 
 clean:
-	rm -f velocity_test
+	rm -f velocity_test transport_test
 
 .PHONY: check clean

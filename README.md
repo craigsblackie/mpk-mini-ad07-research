@@ -34,7 +34,8 @@ external ESP32-C3 while preserving the original USB MIDI functionality.
   response curves for the keys and pads (stored outside the stock program
   record, so stock editor compatibility is untouched, and defaulting to a
   curve that is bit-identical to stock), and a **WiFi editor hosted on the
-  ESP32 itself** -- press BOOT, join its access point, and edit programs,
+  ESP32 itself** -- hold PROGRAM for two seconds (or press the ESP's BOOT
+  button), join its access point, and edit programs,
   pads, knobs, the arpeggiator and the curves in a browser. It replaces the
   discontinued AKAI editor and needs no host software at all.
 
