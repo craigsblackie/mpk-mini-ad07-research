@@ -12,6 +12,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "captive_dns.h"
+
 /* ---- semaphore + bridge fakes, driven by the test ---- */
 static int mutex_obj, binary_obj;
 static int reply_available;
@@ -21,6 +23,10 @@ int log_warn_count;   /* referenced by the shared esp_log stub */
 /* Stands in for the page the build embeds from editor.html. */
 const uint8_t editor_html_start[] = "<!doctype html><title>t</title>";
 const uint8_t editor_html_end[] = {0};
+
+captive_dns_handle_t captive_dns_start(uint32_t ap_addr)
+{ (void)ap_addr; return (captive_dns_handle_t)1; }
+void captive_dns_stop(captive_dns_handle_t handle) { (void)handle; }
 
 #include "editor.c"
 
@@ -130,6 +136,14 @@ static const char *json_find(const char *body, const char *key)
 int main(void)
 {
 	char buf[160];
+
+	{
+		httpd_req_t req = {0};
+		req.uri = "/generate_204";
+		captive_redirect_get(&req);
+		ok("captive probe redirects", !strcmp(req.status, "303 See Other") &&
+		   strstr(req.resp, "MPK mini editor") != NULL, req.status);
+	}
 
 	/* ---- 1. the duplicated table matches the firmware's ---- */
 	{

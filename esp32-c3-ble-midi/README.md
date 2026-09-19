@@ -322,6 +322,12 @@ AKAI editor still running on a current OS.
 | Password | `mpkmini1` |
 | Address | `http://192.168.4.1/` |
 
+Phones and computers that support captive-portal discovery should open the
+editor automatically after joining. The AP advertises the editor URL using
+DHCP option 114 and redirects connectivity-check DNS/HTTP traffic to the
+editor. If the operating system does not show its sign-in window, open the
+address above in a browser.
+
 Hold PROGRAM again (or press BOOT again) to shut the portal down. It is **off
 by default and not persistent** -- it never comes up on its own, because an
 idle AP would share the one 2.4 GHz antenna with BLE for no benefit and would
